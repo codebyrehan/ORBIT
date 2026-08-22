@@ -44,10 +44,25 @@ async def test_execute_returns_text_request_id_and_latency() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_preserves_caller_request_id() -> None:
+    executor = RuntimeExecutor(FakeRuntime(), timeout_seconds=1)
+    result = await executor.execute(GenerationRequest(prompt="hi", model="demo"), request_id="req-123")
+    assert result.request_id == "req-123"
+
+
+@pytest.mark.asyncio
 async def test_stream_preserves_chunks() -> None:
     executor = RuntimeExecutor(FakeRuntime(), timeout_seconds=1)
     chunks = [chunk async for chunk in executor.stream(GenerationRequest(prompt="hi", model="demo"))]
     assert chunks == ["hello", " world"]
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_caller_request_id_in_errors() -> None:
+    executor = RuntimeExecutor(BrokenRuntime(), timeout_seconds=1)
+    with pytest.raises(RuntimeExecutionError, match="req-stream"):
+        async for _ in executor.stream(GenerationRequest(prompt="hi", model="demo"), request_id="req-stream"):
+            pass
 
 
 @pytest.mark.asyncio
@@ -62,3 +77,13 @@ async def test_backend_failure_is_normalized() -> None:
     executor = RuntimeExecutor(BrokenRuntime(), timeout_seconds=1)
     with pytest.raises(RuntimeExecutionError, match="generation failed"):
         await executor.execute(GenerationRequest(prompt="hi", model="demo"))
+
+
+@pytest.mark.asyncio
+async def test_cancellation_propagates() -> None:
+    executor = RuntimeExecutor(SlowRuntime(), timeout_seconds=1)
+    task = asyncio.create_task(executor.execute(GenerationRequest(prompt="hi", model="demo")))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
