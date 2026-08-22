@@ -6,30 +6,27 @@ ORBIT is an open-source platform for running, managing, and orchestrating AI on 
 
 ## Project status
 
-🚧 **Early development — production control plane + remote runtime adapter**
+🚧 **Early development — production control plane + product-plane foundation**
 
-The control plane, model lifecycle, routing, observability, security, recovery, browser dashboard, and production release gates are implemented. ORBIT can now also connect to any OpenAI-compatible remote inference service without changing the core API.
+The control plane, model lifecycle, routing, observability, security, recovery, browser dashboard, remote inference adapter, persistent projects/conversations, knowledge retrieval, capability-gated tools, agents, MCP HTTP compatibility, multimodal artifact handling, and production packaging foundations are implemented.
 
 ## Current foundation
 
 - Hardware discovery and normalized resource profiling
-- Durable local model catalog
-- Verified local model artifact lifecycle
+- Durable local model catalog and verified local artifact lifecycle
 - Compatibility scoring and resource placement
 - Runtime adapter contract with llama.cpp and generic OpenAI-compatible remote adapters
-- Local state/configuration primitives
-- Unified HTTP control-plane API
-- OpenAI-compatible model and chat endpoint shapes
-- Deterministic runtime routing with health/resource checks
-- Routed streaming chat completions using Server-Sent Events
-- Optional constant-time bearer API-key authentication for `/v1/*`
-- Configurable process-local token-bucket rate limiting for `/v1/*`
-- Durable privacy-conscious JSONL request audit trail
-- Audit events queryable through `GET /v1/audit/events`
-- Health/readiness probes excluded from authentication and rate limiting
-- Capability-based permissions
-- Plugin manifest and registry contracts
-- Python 3.11–3.13 CI, linting, type checking, and tests
+- Unified HTTP control-plane API and OpenAI-compatible chat endpoint shapes
+- Deterministic routing with health/resource checks and routed SSE streaming
+- Bearer authentication, rate limiting, privacy-conscious request audit, backup/recovery and readiness probes
+- Persistent SQLite product state for projects, conversations and messages
+- Project-scoped knowledge ingestion with SHA-256 identity and lexical retrieval baseline
+- Capability-gated built-in tools and MCP-compatible HTTP tool shim
+- Persistent agent definitions with model routing and execution
+- Audio/image upload, hashing and durable media inventory
+- Replaceable voice/vision backend contracts
+- Unified production entrypoint and Docker packaging
+- Python 3.11–3.13 CI, linting, type checking, tests and release gates
 
 ## Remote AI runtime
 
@@ -44,59 +41,54 @@ export ORBIT_OPENAI_RUNTIME_NAME="openai-compatible"
 
 When these variables are present and no model is already registered, ORBIT automatically registers the configured remote model and routes inference through the adapter. The adapter uses `/models` for health checks and `/chat/completions` for generation. API keys are read only from process environment and are never written to the audit log.
 
-This same adapter works with OpenAI-compatible self-hosted gateways and providers; only `ORBIT_OPENAI_BASE_URL` and credentials need to change.
+## Product-plane APIs
+
+- `GET/POST /v1/projects` — durable projects
+- `POST /v1/projects/{id}/conversations` — project chat sessions
+- `GET/POST /v1/conversations/{id}` — conversation history and messages
+- `POST /v1/projects/{id}/knowledge` — local knowledge ingestion
+- `POST /v1/projects/{id}/knowledge/search` — retrieval baseline
+- `GET/POST /v1/tools` and `POST /v1/tools/{name}/run` — capability-gated tools
+- `POST /v1/mcp/tools/{name}` — MCP-compatible HTTP tool surface
+- `GET/POST /v1/agents` and `POST /v1/agents/{id}/run` — agent definitions/execution
+- `POST/GET /v1/media` — audio/image artifact ingestion and inventory
+- `GET /v1/platform` — product capability matrix
+- `GET /v1/packaging` — installation/container metadata
+- `GET /control` — production control-center metadata
+
+Voice and vision remain adapter-based: ORBIT securely stores media now, while heavier speech/vision engines can be installed without changing the control-plane contract.
 
 ## Control-plane security and auditability
 
-ORBIT can protect its versioned control-plane endpoints with a local API key. Set `OrbitConfig.api_key` to enable authentication. Clients must then send `Authorization: Bearer <api-key>` for `/v1/*` requests. Health and readiness endpoints remain unauthenticated so local process supervisors can probe the service.
+ORBIT can protect its versioned control-plane endpoints with a local API key. Clients must send `Authorization: Bearer <api-key>` for `/v1/*` requests. Health and readiness remain unauthenticated for process supervisors.
 
-The control plane also supports `rate_limit_per_minute` and `rate_limit_burst`. The limiter is an in-process token bucket keyed by the authenticated identity, or by client address when authentication is disabled. A distributed deployment should enforce distributed limits at its reverse proxy or service boundary.
+The limiter is an in-process token bucket, and every request is recorded in a privacy-conscious append-only audit trail. Tool execution requires explicit capability grants and has no arbitrary shell execution path.
 
-Every request is recorded in the local append-only `audit.jsonl` file with timestamp, request ID, method, path, status, duration, and authentication state. Request bodies, authorization headers, API keys, and client addresses are intentionally excluded. Recent events can be inspected through `GET /v1/audit/events?limit=100`.
+## Packaging
 
-## Model lifecycle
+Build Python distributions with:
 
-The model lifecycle is now a complete local control-plane flow:
+```bash
+./scripts/package.sh
+```
 
-1. Register runtime-neutral model metadata with `POST /v1/models`.
-2. Install a local artifact with `POST /v1/models/{id}/install`.
-3. Verify file size and optional SHA-256 before activation.
-4. Atomically move the verified artifact into ORBIT-managed storage.
-5. Restore lifecycle state from durable metadata after restart.
-6. Inspect lifecycle state with `GET /v1/models/{id}` or `GET /v1/models`.
-7. Remove stopped models with `DELETE /v1/models/{id}`.
+Build the production container with:
 
-## Inference routing and streaming
+```bash
+docker build -t orbit-ai .
+```
 
-Chat requests are resolved through the model catalog, resource scheduler, and runtime health checks before execution. Callers may leave runtime selection automatic or request a specific runtime.
-
-`POST /v1/chat/completions` supports both buffered and streaming responses. With `"stream": true`, ORBIT returns Server-Sent Events containing OpenAI-compatible chat-completion chunks and terminates with `data: [DONE]`. Runtime failures are surfaced as structured streaming error events and recorded by the API metrics layer.
+The production container now starts `orbit.entrypoint:app`, which exposes the complete product-plane router.
 
 ## Principles
 
 - **Local-first:** your hardware and data come first.
 - **Free and open source:** no mandatory subscription or hosted account.
-- **Runtime-agnostic:** model runtimes are adapters, not the product architecture.
-- **Hardware-aware:** ORBIT should make sensible resource decisions automatically.
+- **Runtime-agnostic:** inference engines are replaceable adapters.
+- **Hardware-aware:** resource decisions are explicit and inspectable.
 - **Secure by default:** tools and agents operate under explicit capabilities.
 - **Simple for users, powerful for developers:** advanced controls remain available without making them mandatory.
-
-## Planned capabilities
-
-- Remote model registries and resumable downloads
-- Native chat and projects
-- Knowledge and retrieval
-- Agents, tools, MCP, and memory
-- Voice, vision, and image capabilities
-- Automation and background tasks
-- Plugin SDK and isolated tool execution
-- Control Center and system observability
-- Cross-platform packaging and one-command setup
 
 ## License
 
 ORBIT is released under the Apache License 2.0.
-
-## Development
-
-The initial implementation is Python-based. The repository is intentionally starting with small, testable contracts so heavyweight runtimes and UI layers can be integrated without turning infrastructure details into the product architecture.
