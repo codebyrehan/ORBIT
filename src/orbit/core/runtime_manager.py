@@ -32,7 +32,7 @@ class RuntimeManager:
         if name in self._runtimes:
             raise ValueError(f"runtime already registered: {name}")
         self._runtimes[name] = adapter
-        self._health[name] = RuntimeHealth(name, False, "health not checked")
+        self._health[name] = RuntimeHealth(name, True, "health not checked")
 
     def get(self, name: str) -> RuntimeAdapter | None:
         return self._runtimes.get(name)
