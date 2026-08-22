@@ -27,7 +27,16 @@ def test_require_bearer_uses_constant_time_policy() -> None:
         require_bearer("Basic xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", expected)
 
 
+def test_confined_path_resolves_relative_candidates_inside_root(tmp_path: Path) -> None:
+    assert confined_path(tmp_path, "models/a.bin") == (tmp_path / "models/a.bin").resolve()
+
+
 def test_confined_path_rejects_escape(tmp_path: Path) -> None:
-    assert confined_path(tmp_path, "models/a.bin") == tmp_path / "models/a.bin"
     with pytest.raises(SecurityError):
         confined_path(tmp_path, "../outside.bin")
+
+
+def test_confined_path_rejects_absolute_escape(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside.bin"
+    with pytest.raises(SecurityError):
+        confined_path(tmp_path, outside)
