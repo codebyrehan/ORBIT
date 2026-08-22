@@ -73,8 +73,12 @@ class OrbitApp:
         llama_url = os.getenv("ORBIT_LLAMA_CPP_URL", "").strip()
         if llama_url and self.runtimes.get("llama.cpp") is None:
             self.runtimes.register(LlamaCppRuntime(base_url=llama_url))
+        remote_base_url = os.getenv("ORBIT_OPENAI_BASE_URL", "").strip()
         remote_key = os.getenv("ORBIT_OPENAI_API_KEY", "").strip()
-        if remote_key and self.runtimes.get("openai-compatible") is None:
+        remote_model = os.getenv("ORBIT_OPENAI_MODEL", "").strip()
+        remote_runtime = os.getenv("ORBIT_OPENAI_RUNTIME_NAME", "openai-compatible").strip()
+        # API-key authentication is optional for local/self-hosted compatible servers.
+        if (remote_key or (remote_base_url and remote_model)) and self.runtimes.get(remote_runtime) is None:
             self.runtimes.register(OpenAICompatibleRuntime.from_env())
 
     def _configured_spec(self) -> ModelSpec | None:
@@ -90,9 +94,6 @@ class OrbitApp:
     def _ensure_configured_model(self) -> None:
         configured = self._configured_spec()
         if configured is not None:
-            # If the persisted catalog only contains the built-in demo model,
-            # promote the configured provider automatically. A user-created
-            # catalog is left untouched so explicit model choices remain safe.
             existing = self.models.all()
             if not existing or all("demo" in model.tags or model.model_id == "orbit-demo" for model in existing):
                 for model in existing:
