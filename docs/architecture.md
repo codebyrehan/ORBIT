@@ -9,17 +9,21 @@ The control plane owns configuration, lifecycle, hardware capabilities, model se
 ```text
                     ORBIT Control Plane
                            |
-                    ORBIT Runtime Layer
+             +-------------+-------------+
+             |             |             |
+          Hardware      Models       Runtimes
+             |             |             |
+             +-------------+-------------+
+                           |
+                    Resource Scheduler
                            |
           +----------------+----------------+
           |                |                |
-       Models            Agents           Media
+       Agents            Media          Knowledge
           |                |                |
           +----------------+----------------+
                            |
-                    Knowledge / Data
-                           |
-                  ORBIT User Experience
+                    ORBIT User Experience
 ```
 
 ## Design rules
@@ -30,14 +34,20 @@ The control plane owns configuration, lifecycle, hardware capabilities, model se
 4. **Small core:** heavyweight integrations belong in adapters or capabilities.
 5. **Explicit permissions:** tools and agents must have bounded capabilities.
 6. **Stable contracts:** UI, CLI, API, and integrations should depend on core interfaces rather than implementation details.
+7. **Best-effort discovery:** hardware detection must degrade gracefully when vendor utilities are unavailable.
+8. **Deterministic placement:** model placement produces explainable decisions before any process is launched.
 
-## Initial boundaries
+## Current boundaries
 
 - `core.config` — typed process configuration and local state location.
 - `core.hardware` — normalized hardware and accelerator capabilities.
+- `core.hardware_detect` — dependency-light host discovery.
 - `core.runtime` — inference backend contract.
+- `core.runtime_manager` — runtime adapter registration and selection.
+- `core.models` — runtime-neutral model metadata and compatibility scoring.
+- `core.scheduler` — resource-aware model placement decisions.
 - `core.lifecycle` — control-plane lifecycle states.
 - `core.app` — application bootstrap and lifecycle orchestration.
 - `cli` — human-facing command line entry point.
 
-Future layers will add model registry, scheduler, routing, knowledge, agents, plugins, and the Control Center without changing the foundational contracts unnecessarily.
+Future layers will add routing, knowledge, agents, plugins, persistence, and the Control Center without changing the foundational contracts unnecessarily.
