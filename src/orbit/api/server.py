@@ -156,7 +156,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             ModelInstaller(context.app.model_manager).remove(model_id)
         except ModelInstallError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        context.app.models._models.pop(model_id, None)
+        context.app.models.remove(model_id)
         return {"id": model_id, "state": "stopped", "removed": True}
 
     @api.post("/v1/models/{model_id}/verify")
