@@ -32,10 +32,7 @@ class LlamaCppRuntime(RuntimeAdapter):
         return await asyncio.to_thread(self._health_sync)
 
     async def generate(self, request: GenerationRequest) -> AsyncIterator[str]:
-        try:
-            text = await asyncio.to_thread(self._generate_sync, request)
-        except RuntimeError:
-            raise
+        text = await asyncio.to_thread(self._generate_sync, request)
         yield text
 
     def _health_sync(self) -> bool:
