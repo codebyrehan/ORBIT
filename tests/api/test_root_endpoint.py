@@ -15,7 +15,7 @@ def test_root_is_a_public_production_landing_endpoint(tmp_path) -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "service": "ORBIT",
+        "service": "ORBIT API",
         "status": "ok",
         "docs": "/docs",
         "health": "/health",
