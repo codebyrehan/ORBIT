@@ -25,6 +25,22 @@ def test_health_readiness_and_system_endpoints(tmp_path) -> None:
     assert "architecture" in system.json()
 
 
+def test_configured_api_key_protects_control_plane_but_not_health(tmp_path) -> None:
+    app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit", api_key="secret-key"))
+    client = TestClient(create_app(app))
+
+    health = client.get("/health")
+    missing = client.get("/v1/models")
+    wrong = client.get("/v1/models", headers={"Authorization": "Bearer wrong"})
+    valid = client.get("/v1/models", headers={"Authorization": "Bearer secret-key"})
+
+    assert health.status_code == 200
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert missing.headers["www-authenticate"] == "Bearer"
+    assert valid.status_code == 200
+
+
 def test_models_endpoint_exposes_catalog(tmp_path) -> None:
     app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit"))
     app.start()
