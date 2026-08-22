@@ -68,6 +68,15 @@ def _context(request: Request) -> ApiContext:
     return context
 
 
+def _sync_catalog_to_manager(app: OrbitApp) -> None:
+    """Bring externally-mutated in-memory catalog entries into lifecycle state."""
+    if app.model_manager is None:
+        return
+    for spec in app.models.all():
+        if app.model_manager.get(spec.model_id) is None:
+            app.model_manager.register(spec)
+
+
 def _model_payload(model: Any) -> dict[str, Any]:
     return {"id": model.spec.model_id, "object": "model", "owned_by": "orbit", "state": model.state.value, "path": str(model.path) if model.path else None, "capabilities": sorted(model.spec.capabilities)}
 
@@ -110,6 +119,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         context = _context(request)
         if context.app.model_manager is None:
             raise HTTPException(status_code=503, detail="model manager unavailable")
+        _sync_catalog_to_manager(context.app)
         return {"object": "list", "data": [_model_payload(model) for model in context.app.model_manager.all()]}
 
     @api.post("/v1/models")
@@ -127,6 +137,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         context = _context(request)
         if context.app.model_manager is None:
             raise HTTPException(status_code=503, detail="model manager unavailable")
+        _sync_catalog_to_manager(context.app)
         managed = context.app.model_manager.get(model_id)
         if managed is None:
             raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
@@ -137,6 +148,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         context = _context(request)
         if context.app.model_manager is None:
             raise HTTPException(status_code=503, detail="model manager unavailable")
+        _sync_catalog_to_manager(context.app)
         managed = context.app.model_manager.get(model_id)
         if managed is None:
             raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
@@ -144,7 +156,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             installed = ModelInstaller(context.app.model_manager).install(managed.spec, Path(payload.source_path), expected_sha256=payload.sha256)
         except ModelInstallError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        context.app.models.register(installed.spec)
+        context.app.models = context.app.model_store.load() if context.app.model_store is not None else context.app.models
         return _model_payload(installed)
 
     @api.delete("/v1/models/{model_id}")
@@ -156,7 +168,8 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             ModelInstaller(context.app.model_manager).remove(model_id)
         except ModelInstallError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        context.app.models.remove(model_id)
+        if context.app.model_store is not None:
+            context.app.models = context.app.model_store.load()
         return {"id": model_id, "state": "stopped", "removed": True}
 
     @api.post("/v1/models/{model_id}/verify")
@@ -181,6 +194,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
     @api.post("/v1/chat/completions")
     async def chat_completion(request: ChatCompletionRequest, http_request: Request) -> dict[str, Any]:
         context = _context(http_request)
+        _sync_catalog_to_manager(context.app)
         if context.app.models.get(request.model) is None:
             raise HTTPException(status_code=404, detail=f"unknown model: {request.model}")
         runtime = context.app.runtimes.active
