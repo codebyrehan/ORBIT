@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import logging
 from dataclasses import dataclass
 from time import monotonic
 from uuid import uuid4
+import json
+import logging
 
 
 @dataclass(slots=True)
