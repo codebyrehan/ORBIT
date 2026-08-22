@@ -78,6 +78,8 @@ Build the production container with:
 docker build -t orbit-ai .
 ```
 
+For Uvicorn, the application factory must be started explicitly with `--factory` when using `orbit.api.server:create_app`.
+
 The production container now starts `orbit.entrypoint:app`, which exposes the complete product-plane router.
 
 ## Principles
