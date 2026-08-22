@@ -13,6 +13,7 @@ from orbit.core.model_manager import ModelManager
 from orbit.core.model_store import ModelStore
 from orbit.core.models import ModelCatalog
 from orbit.core.orchestrator import InferenceOrchestrator
+from orbit.core.request_manager import RequestManager
 from orbit.core.router import InferenceRouter
 from orbit.core.runtime_manager import RuntimeManager
 from orbit.core.scheduler import ResourceScheduler
@@ -32,6 +33,7 @@ class OrbitApp:
     model_manager: ModelManager | None = None
     orchestrator: InferenceOrchestrator | None = None
     router: InferenceRouter | None = None
+    request_manager: RequestManager = field(default_factory=RequestManager)
     health: HealthRegistry = field(default_factory=HealthRegistry)
 
     def start(self) -> None:
@@ -48,46 +50,11 @@ class OrbitApp:
         self.state = LifecycleState.READY
 
     def _register_health_checks(self) -> None:
-        self.health.register(
-            "hardware",
-            lambda: HealthCheck(
-                "hardware",
-                HealthStatus.HEALTHY if self.hardware is not None else HealthStatus.UNHEALTHY,
-                "hardware profile available" if self.hardware is not None else "hardware discovery unavailable",
-            ),
-        )
-        self.health.register(
-            "models",
-            lambda: HealthCheck(
-                "models",
-                HealthStatus.HEALTHY if self.model_store is not None else HealthStatus.UNHEALTHY,
-                f"{len(self.models.all())} catalog entries",
-            ),
-        )
-        self.health.register(
-            "scheduler",
-            lambda: HealthCheck(
-                "scheduler",
-                HealthStatus.HEALTHY if self.scheduler is not None else HealthStatus.UNHEALTHY,
-                "resource scheduler ready" if self.scheduler is not None else "scheduler unavailable",
-            ),
-        )
-        self.health.register(
-            "orchestrator",
-            lambda: HealthCheck(
-                "orchestrator",
-                HealthStatus.HEALTHY if self.orchestrator is not None else HealthStatus.UNHEALTHY,
-                "inference orchestration ready" if self.orchestrator is not None else "orchestrator unavailable",
-            ),
-        )
-        self.health.register(
-            "router",
-            lambda: HealthCheck(
-                "router",
-                HealthStatus.HEALTHY if self.router is not None else HealthStatus.UNHEALTHY,
-                "inference router ready" if self.router is not None else "router unavailable",
-            ),
-        )
+        self.health.register("hardware", lambda: HealthCheck("hardware", HealthStatus.HEALTHY if self.hardware is not None else HealthStatus.UNHEALTHY, "hardware profile available" if self.hardware is not None else "hardware discovery unavailable"))
+        self.health.register("models", lambda: HealthCheck("models", HealthStatus.HEALTHY if self.model_store is not None else HealthStatus.UNHEALTHY, f"{len(self.models.all())} catalog entries"))
+        self.health.register("scheduler", lambda: HealthCheck("scheduler", HealthStatus.HEALTHY if self.scheduler is not None else HealthStatus.UNHEALTHY, "resource scheduler ready" if self.scheduler is not None else "scheduler unavailable"))
+        self.health.register("orchestrator", lambda: HealthCheck("orchestrator", HealthStatus.HEALTHY if self.orchestrator is not None else HealthStatus.UNHEALTHY, "inference orchestration ready" if self.orchestrator is not None else "orchestrator unavailable"))
+        self.health.register("router", lambda: HealthCheck("router", HealthStatus.HEALTHY if self.router is not None else HealthStatus.UNHEALTHY, "inference router ready" if self.router is not None else "router unavailable"))
 
     def save_models(self) -> None:
         """Persist the current catalog after an explicit catalog mutation."""
