@@ -12,6 +12,7 @@ jobs:
       ORBIT_RATE_LIMIT_PER_MINUTE: "120"
       ORBIT_RATE_LIMIT_BURST: "20"
       ORBIT_DATA_DIR: /var/lib/orbit
+      ORBIT_ENABLE_DEMO_MODEL: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -25,7 +26,7 @@ jobs:
           EOF
           chmod 666 release-data/requests.jsonl
       - name: Start release container
-        run: docker run -d --name orbit-release -p 8787:8787 -e ORBIT_API_TOKEN -e ORBIT_RATE_LIMIT_PER_MINUTE -e ORBIT_RATE_LIMIT_BURST -e ORBIT_DATA_DIR -v "$PWD/release-data:/var/lib/orbit" orbit-ai:release
+        run: docker run -d --name orbit-release -p 8787:8787 -e ORBIT_API_TOKEN -e ORBIT_RATE_LIMIT_PER_MINUTE -e ORBIT_RATE_LIMIT_BURST -e ORBIT_DATA_DIR -e ORBIT_ENABLE_DEMO_MODEL -v "$PWD/release-data:/var/lib/orbit" orbit-ai:release
       - name: Wait for readiness
         run: |
           for i in $(seq 1 30); do
@@ -39,6 +40,22 @@ jobs:
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8787/v1/metrics)" = "401"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Authorization: Bearer invalid-token' http://127.0.0.1:8787/v1/metrics)" = "401"
           curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics | grep -q '"requests_total"'
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/session | grep -q '"authenticated":true'
+      - name: Browser dashboard regression
+        run: |
+          curl --fail --silent -H 'Accept: text/html' http://127.0.0.1:8787/ | grep -q 'ORBIT'
+          curl --fail --silent -H 'Accept: text/html' http://127.0.0.1:8787/ | grep -q 'Inference'
+          curl --fail --silent http://127.0.0.1:8787/ | grep -q '"status":"ok"'
+      - name: Model discovery and inference regression
+        run: |
+          models=$(curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/models)
+          echo "$models"
+          echo "$models" | grep -q 'orbit-demo'
+          response=$(curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" -H 'Content-Type: application/json' -d '{"model":"orbit-demo","messages":[{"role":"user","content":"production inference smoke test"}]}' http://127.0.0.1:8787/v1/chat/completions)
+          echo "$response"
+          echo "$response" | grep -q '"object":"chat.completion"'
+          echo "$response" | grep -q '"runtime":"orbit-demo"'
+          echo "$response" | grep -q 'production inference smoke test'
       - name: Rate-limit regression
         run: |
           statuses=$(for i in $(seq 1 21); do curl --silent --output /dev/null --write-out '%{http_code}\n' -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics; done)
@@ -78,7 +95,7 @@ jobs:
           grep -q 'release-gate-request' restored-data/requests.jsonl
       - name: Restore validation container
         run: |
-          docker run -d --name orbit-restore -p 8788:8787 -e ORBIT_API_TOKEN -e ORBIT_RATE_LIMIT_PER_MINUTE -e ORBIT_RATE_LIMIT_BURST -e ORBIT_DATA_DIR -v "$PWD/restored-data:/var/lib/orbit" orbit-ai:release
+          docker run -d --name orbit-restore -p 8788:8787 -e ORBIT_API_TOKEN -e ORBIT_RATE_LIMIT_PER_MINUTE -e ORBIT_RATE_LIMIT_BURST -e ORBIT_DATA_DIR -e ORBIT_ENABLE_DEMO_MODEL -v "$PWD/restored-data:/var/lib/orbit" orbit-ai:release
           for i in $(seq 1 30); do if curl --fail --silent http://127.0.0.1:8788/ready >/dev/null; then break; fi; sleep 2; done
           restored=$(curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8788/v1/requests/release-gate-request)
           echo "$restored"
@@ -93,13 +110,14 @@ jobs:
       - name: Restart after graceful shutdown
         run: |
           docker rm orbit-release
-          docker run -d --name orbit-release -p 8787:8787 -e ORBIT_API_TOKEN -e ORBIT_RATE_LIMIT_PER_MINUTE -e ORBIT_RATE_LIMIT_BURST -e ORBIT_DATA_DIR -v "$PWD/release-data:/var/lib/orbit" orbit-ai:release
+          docker run -d --name orbit-release -p 8787:8787 -e ORBIT_API_TOKEN -e ORBIT_RATE_LIMIT_PER_MINUTE -e ORBIT_RATE_LIMIT_BURST -e ORBIT_DATA_DIR -e ORBIT_ENABLE_DEMO_MODEL -v "$PWD/release-data:/var/lib/orbit" orbit-ai:release
           for i in $(seq 1 30); do if curl --fail --silent http://127.0.0.1:8787/ready >/dev/null; then exit 0; fi; sleep 2; done
           docker logs orbit-release
           exit 1
       - name: Final regression sweep
         run: |
           curl --fail --silent http://127.0.0.1:8787/ | grep -q '"status":"ok"'
+          curl --fail --silent -H 'Accept: text/html' http://127.0.0.1:8787/ | grep -q 'Inference'
           curl --fail --silent http://127.0.0.1:8787/health | grep -q '"status":"ok"'
           curl --fail --silent http://127.0.0.1:8787/ready | grep -q '"ready":true'
           curl --fail --silent http://127.0.0.1:8787/docs | grep -q 'ORBIT'
