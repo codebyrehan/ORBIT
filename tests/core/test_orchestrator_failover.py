@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from orbit.core.failover import RuntimeFailover
+from orbit.core.hardware import HardwareProfile
 from orbit.core.models import ModelSpec
 from orbit.core.orchestrator import InferenceOrchestrator
 from orbit.core.runtime import GenerationRequest, RuntimeInfo
@@ -29,13 +30,18 @@ class FakeRuntime:
         return stream()
 
 
+def make_orchestrator(runtimes: RuntimeManager) -> InferenceOrchestrator:
+    hardware = HardwareProfile(platform="test", architecture="x86_64", memory_bytes=8 * 1024**3)
+    return InferenceOrchestrator(ResourceScheduler(hardware), runtimes, failover=RuntimeFailover(runtimes))
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_retries_before_first_chunk() -> None:
     runtimes = RuntimeManager()
     runtimes.register(FakeRuntime("a", (), fail=True))
     runtimes.register(FakeRuntime("b", ("hello", " world")))
     await runtimes.check_all()
-    orchestrator = InferenceOrchestrator(ResourceScheduler(), runtimes, failover=RuntimeFailover(runtimes))
+    orchestrator = make_orchestrator(runtimes)
     model = ModelSpec(model_id="m", display_name="M", runtimes=frozenset({"a", "b"}))
 
     chunks = [chunk async for chunk in orchestrator.generate(model, "prompt", runtime_name="a")]
@@ -49,7 +55,7 @@ async def test_orchestrator_does_not_retry_after_partial_output() -> None:
     runtimes = RuntimeManager()
     runtimes.register(FakeRuntime("a", ("hello",), fail=False))
     await runtimes.check_all()
-    orchestrator = InferenceOrchestrator(ResourceScheduler(), runtimes, failover=RuntimeFailover(runtimes))
+    orchestrator = make_orchestrator(runtimes)
     model = ModelSpec(model_id="m", display_name="M", runtimes=frozenset({"a"}))
 
     chunks = [chunk async for chunk in orchestrator.generate(model, "prompt", runtime_name="a")]
