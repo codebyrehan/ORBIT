@@ -37,6 +37,7 @@ class RequestManager:
             raise ValueError("max_records must be positive")
         self.max_records = max_records
         self.journal_path = journal_path
+        self.recovered_count = 0
         self._records: dict[str, RequestRecord] = {}
         self._lock = Lock()
         if journal_path is not None:
@@ -132,6 +133,7 @@ class RequestManager:
                 )
                 self._records[request_id] = updated
                 recovered.append(updated)
+        self.recovered_count = len(recovered)
         self._trim()
         for record in recovered:
             self._persist(record)
