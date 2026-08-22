@@ -6,14 +6,13 @@ from orbit.core.request_manager import RequestManager
 def test_request_manager_tracks_completion_and_bounds_history() -> None:
     manager = RequestManager(max_records=2)
     manager.start("r1", "m1", "rt1")
-    manager.complete("r1", tokens=3)
+    completed = manager.complete("r1", tokens=3)
     manager.start("r2", "m1", "rt1")
     manager.start("r3", "m2", "rt2")
 
-    assert manager.get("r1") is not None
-    assert manager.get("r1").state == "completed"
-    assert manager.get("r1").tokens == 3
-    assert manager.get("r2") is None
+    assert completed.state == "completed"
+    assert completed.tokens == 3
+    assert manager.get("r1") is None
     assert [item.request_id for item in manager.recent()] == ["r3", "r2"]
 
 
