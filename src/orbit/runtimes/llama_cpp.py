@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -28,6 +29,16 @@ class LlamaCppRuntime(RuntimeAdapter):
         )
 
     async def health(self) -> bool:
+        return await asyncio.to_thread(self._health_sync)
+
+    async def generate(self, request: GenerationRequest) -> AsyncIterator[str]:
+        try:
+            text = await asyncio.to_thread(self._generate_sync, request)
+        except RuntimeError:
+            raise
+        yield text
+
+    def _health_sync(self) -> bool:
         request = Request(self._url("/health"), method="GET")
         try:
             with urlopen(request, timeout=self.timeout) as response:
@@ -35,7 +46,7 @@ class LlamaCppRuntime(RuntimeAdapter):
         except (OSError, URLError):
             return False
 
-    async def generate(self, request: GenerationRequest) -> AsyncIterator[str]:
+    def _generate_sync(self, request: GenerationRequest) -> str:
         payload = {
             "model": request.model,
             "prompt": request.prompt,
@@ -61,8 +72,8 @@ class LlamaCppRuntime(RuntimeAdapter):
             raise RuntimeError("llama.cpp returned no completion choices")
         text = choices[0].get("text")
         if not isinstance(text, str):
-            raise RuntimeError("llama.cpp returned an invalid completion")
-        yield text
+            raise TypeError("llama.cpp returned an invalid completion")
+        return text
 
     def _url(self, path: str) -> str:
         return self.base_url.rstrip("/") + path
