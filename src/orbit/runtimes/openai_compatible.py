@@ -7,7 +7,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -54,7 +54,8 @@ class OpenAICompatibleRuntime(RuntimeAdapter):
         request = Request(self._url("/models"), headers=self._headers(), method="GET")
         try:
             with urlopen(request, timeout=min(self.timeout, 10.0)) as response:
-                return 200 <= response.status < 300
+                status = cast(int, response.status)
+                return 200 <= status < 300
         except (OSError, URLError, HTTPError):
             return False
 
