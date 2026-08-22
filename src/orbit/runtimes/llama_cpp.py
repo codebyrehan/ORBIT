@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import cast
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -31,7 +32,10 @@ class LlamaCppRuntime(RuntimeAdapter):
     async def health(self) -> bool:
         return await asyncio.to_thread(self._health_sync)
 
-    async def generate(self, request: GenerationRequest) -> AsyncIterator[str]:
+    def generate(self, request: GenerationRequest) -> AsyncIterator[str]:
+        return self._generate(request)
+
+    async def _generate(self, request: GenerationRequest) -> AsyncIterator[str]:
         text = await asyncio.to_thread(self._generate_sync, request)
         yield text
 
@@ -39,7 +43,8 @@ class LlamaCppRuntime(RuntimeAdapter):
         request = Request(self._url("/health"), method="GET")
         try:
             with urlopen(request, timeout=self.timeout) as response:
-                return 200 <= response.status < 300
+                status = cast(int, response.status)
+                return 200 <= status < 300
         except (OSError, URLError):
             return False
 
