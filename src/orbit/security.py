@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import hashlib
 import hmac
 import os
-from pathlib import Path
 
 
 class SecurityError(ValueError):
