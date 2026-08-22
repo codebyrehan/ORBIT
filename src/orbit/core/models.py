@@ -75,6 +75,9 @@ class ModelCatalog:
     def register(self, model: ModelSpec) -> None:
         self._models[model.model_id] = model
 
+    def remove(self, model_id: str) -> bool:
+        return self._models.pop(model_id, None) is not None
+
     def get(self, model_id: str) -> ModelSpec | None:
         return self._models.get(model_id)
 
