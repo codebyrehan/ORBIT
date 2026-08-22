@@ -6,7 +6,7 @@ ORBIT is an open-source platform for running, managing, and orchestrating AI on 
 
 ## Project status
 
-🚧 **Early development — control-plane rate limiting complete**
+🚧 **Early development — control-plane audit trail complete**
 
 The project is being built as an independent architecture, with an emphasis on local-first operation, hardware awareness, privacy, modular runtimes, and a simple user experience.
 
@@ -24,16 +24,20 @@ The project is being built as an independent architecture, with an emphasis on l
 - Routed streaming chat completions using Server-Sent Events
 - Optional constant-time bearer API-key authentication for `/v1/*`
 - Configurable process-local token-bucket rate limiting for `/v1/*`
+- Durable privacy-conscious JSONL request audit trail
+- Audit events queryable through `GET /v1/audit/events`
 - Health/readiness probes excluded from authentication and rate limiting
 - Capability-based permissions
 - Plugin manifest and registry contracts
 - Python 3.11–3.13 CI, linting, type checking, and tests
 
-## Control-plane security
+## Control-plane security and auditability
 
 ORBIT can protect its versioned control-plane endpoints with a local API key. Set `OrbitConfig.api_key` to enable authentication. Clients must then send `Authorization: Bearer <api-key>` for `/v1/*` requests. Health and readiness endpoints remain unauthenticated so local process supervisors can probe the service.
 
 The control plane also supports `rate_limit_per_minute` and `rate_limit_burst`. The limiter is an in-process token bucket keyed by the authenticated identity, or by client address when authentication is disabled. A distributed deployment should enforce distributed limits at its reverse proxy or service boundary.
+
+Every request is recorded in the local append-only `audit.jsonl` file with timestamp, request ID, method, path, status, duration, and authentication state. Request bodies, authorization headers, API keys, and client addresses are intentionally excluded. Recent events can be inspected through `GET /v1/audit/events?limit=100`.
 
 ## Model lifecycle
 
