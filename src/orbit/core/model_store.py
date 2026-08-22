@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import cast
 
 from orbit.core.models import ModelCatalog, ModelModality, ModelSpec
 
@@ -54,6 +55,9 @@ class ModelStore:
 
     @staticmethod
     def _from_dict(item: dict[str, object]) -> ModelSpec:
+        capabilities = item.get("capabilities", [])
+        runtimes = item.get("runtimes", [])
+        tags = item.get("tags", [])
         return ModelSpec(
             model_id=str(item["model_id"]),
             display_name=str(item["display_name"]),
@@ -62,8 +66,8 @@ class ModelStore:
             min_memory_bytes=item.get("min_memory_bytes")
             if isinstance(item.get("min_memory_bytes"), int)
             else None,
-            capabilities=frozenset(item.get("capabilities", [])),
-            runtimes=frozenset(item.get("runtimes", [])),
-            tags=frozenset(item.get("tags", [])),
+            capabilities=frozenset(cast(list[str], capabilities)),
+            runtimes=frozenset(cast(list[str], runtimes)),
+            tags=frozenset(cast(list[str], tags)),
             local_path=item.get("local_path") if isinstance(item.get("local_path"), str) else None,
         )
