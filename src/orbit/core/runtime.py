@@ -35,5 +35,5 @@ class RuntimeAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def generate(self, request: GenerationRequest) -> AsyncIterator[str]:
+    def generate(self, request: GenerationRequest) -> AsyncIterator[str]:
         raise NotImplementedError
