@@ -58,16 +58,22 @@ class ModelStore:
         capabilities = item.get("capabilities", [])
         runtimes = item.get("runtimes", [])
         tags = item.get("tags", [])
+        size_bytes_raw = item.get("size_bytes")
+        min_memory_bytes_raw = item.get("min_memory_bytes")
+        local_path_raw = item.get("local_path")
+        size_bytes: int | None = size_bytes_raw if isinstance(size_bytes_raw, int) else None
+        min_memory_bytes: int | None = (
+            min_memory_bytes_raw if isinstance(min_memory_bytes_raw, int) else None
+        )
+        local_path: str | None = local_path_raw if isinstance(local_path_raw, str) else None
         return ModelSpec(
             model_id=str(item["model_id"]),
             display_name=str(item["display_name"]),
             modality=ModelModality(str(item.get("modality", "text"))),
-            size_bytes=item.get("size_bytes") if isinstance(item.get("size_bytes"), int) else None,
-            min_memory_bytes=item.get("min_memory_bytes")
-            if isinstance(item.get("min_memory_bytes"), int)
-            else None,
+            size_bytes=size_bytes,
+            min_memory_bytes=min_memory_bytes,
             capabilities=frozenset(cast(list[str], capabilities)),
             runtimes=frozenset(cast(list[str], runtimes)),
             tags=frozenset(cast(list[str], tags)),
-            local_path=item.get("local_path") if isinstance(item.get("local_path"), str) else None,
+            local_path=local_path,
         )
