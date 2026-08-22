@@ -62,16 +62,19 @@ class OrbitApp:
         self._register_health_checks()
         self.state = LifecycleState.READY
 
+    @staticmethod
+    def _demo_enabled() -> bool:
+        return os.getenv("ORBIT_ENABLE_DEMO_MODEL", "false").lower() not in {"0", "false", "no", "off"}
+
     def _register_runtimes(self) -> None:
-        if self.runtimes.get("orbit-demo") is None:
+        if self._demo_enabled() and self.runtimes.get("orbit-demo") is None:
             self.runtimes.register(DemoRuntime())
         llama_url = os.getenv("ORBIT_LLAMA_CPP_URL", "").strip()
         if llama_url and self.runtimes.get("llama.cpp") is None:
             self.runtimes.register(LlamaCppRuntime(base_url=llama_url))
 
     def _ensure_demo_model(self) -> None:
-        enabled = os.getenv("ORBIT_ENABLE_DEMO_MODEL", "true").lower() not in {"0", "false", "no", "off"}
-        if not enabled or self.models.all():
+        if not self._demo_enabled() or self.models.all():
             return
         llama_model = os.getenv("ORBIT_LLAMA_CPP_MODEL", "").strip()
         if llama_model and self.runtimes.get("llama.cpp") is not None:
