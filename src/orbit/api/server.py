@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -12,6 +13,7 @@ from orbit.api.runtime_control import RuntimeExecutionError, RuntimeExecutor
 from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
 from orbit.core.health import HealthStatus
+from orbit.core.model_artifacts import ModelArtifactError, ModelArtifactManager
 from orbit.core.runtime import GenerationRequest
 
 
@@ -25,6 +27,11 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, gt=0)
+
+
+class ModelVerifyRequest(BaseModel):
+    path: str = Field(min_length=1)
+    sha256: str | None = Field(default=None, min_length=64, max_length=64)
 
 
 @dataclass(slots=True)
@@ -64,6 +71,27 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
     async def models(request: Request) -> dict[str, Any]:
         context = _context(request)
         return {"object": "list", "data": [{"id": model.model_id, "object": "model", "owned_by": "orbit", "capabilities": sorted(model.capabilities)} for model in context.app.models.all()]}
+
+    @api.get("/v1/models/{model_id}")
+    async def model_detail(model_id: str, request: Request) -> dict[str, Any]:
+        context = _context(request)
+        if context.app.model_manager is None:
+            raise HTTPException(status_code=503, detail="model manager unavailable")
+        managed = context.app.model_manager.get(model_id)
+        if managed is None:
+            raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
+        return {"id": model_id, "state": managed.state.value, "path": str(managed.path) if managed.path else None, "error": managed.error, "size_bytes": managed.spec.size_bytes, "modality": managed.spec.modality.value, "capabilities": sorted(managed.spec.capabilities)}
+
+    @api.post("/v1/models/{model_id}/verify")
+    async def verify_model(model_id: str, payload: ModelVerifyRequest, request: Request) -> dict[str, Any]:
+        context = _context(request)
+        if context.app.model_manager is None:
+            raise HTTPException(status_code=503, detail="model manager unavailable")
+        try:
+            report = ModelArtifactManager(context.app.model_manager).verify(model_id, Path(payload.path), expected_sha256=payload.sha256)
+        except ModelArtifactError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"model": report.model_id, "path": str(report.path), "size_bytes": report.size_bytes, "sha256": report.sha256, "verified": report.verified}
 
     @api.get("/v1/system")
     async def system(request: Request) -> dict[str, Any]:
