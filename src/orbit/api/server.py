@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -104,7 +103,13 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             "id": "orbit-chat-completion",
             "object": "chat.completion",
             "model": request.model,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": text},
+                    "finish_reason": "stop",
+                }
+            ],
         }
 
     return api
