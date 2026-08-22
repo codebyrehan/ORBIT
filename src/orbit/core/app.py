@@ -12,6 +12,7 @@ from orbit.core.lifecycle import LifecycleState
 from orbit.core.model_manager import ModelManager
 from orbit.core.model_store import ModelStore
 from orbit.core.models import ModelCatalog
+from orbit.core.orchestrator import InferenceOrchestrator
 from orbit.core.runtime_manager import RuntimeManager
 from orbit.core.scheduler import ResourceScheduler
 
@@ -28,6 +29,7 @@ class OrbitApp:
     scheduler: ResourceScheduler | None = None
     model_store: ModelStore | None = None
     model_manager: ModelManager | None = None
+    orchestrator: InferenceOrchestrator | None = None
     health: HealthRegistry = field(default_factory=HealthRegistry)
 
     def start(self) -> None:
@@ -38,6 +40,7 @@ class OrbitApp:
         self.model_store = ModelStore(self.config.data_dir / "models.json")
         self.models = self.model_store.load()
         self.model_manager = ModelManager(self.model_store, self.config.data_dir / "models")
+        self.orchestrator = InferenceOrchestrator(self.scheduler, self.runtimes)
         self._register_health_checks()
         self.state = LifecycleState.READY
 
@@ -64,6 +67,14 @@ class OrbitApp:
                 "scheduler",
                 HealthStatus.HEALTHY if self.scheduler is not None else HealthStatus.UNHEALTHY,
                 "resource scheduler ready" if self.scheduler is not None else "scheduler unavailable",
+            ),
+        )
+        self.health.register(
+            "orchestrator",
+            lambda: HealthCheck(
+                "orchestrator",
+                HealthStatus.HEALTHY if self.orchestrator is not None else HealthStatus.UNHEALTHY,
+                "inference orchestration ready" if self.orchestrator is not None else "orchestrator unavailable",
             ),
         )
 
