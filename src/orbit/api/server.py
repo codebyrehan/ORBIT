@@ -15,6 +15,8 @@ from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
 from orbit.core.health import HealthStatus
 from orbit.core.model_artifacts import ModelArtifactError, ModelArtifactManager
+from orbit.core.model_installer import ModelInstallError, ModelInstaller
+from orbit.core.models import ModelModality, ModelSpec
 from orbit.core.runtime import GenerationRequest
 from orbit.observability import RequestTrace, RuntimeMetrics, configure_logging
 
@@ -33,6 +35,22 @@ class ChatCompletionRequest(BaseModel):
 
 class ModelVerifyRequest(BaseModel):
     path: str = Field(min_length=1)
+    sha256: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+class ModelRegisterRequest(BaseModel):
+    id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    modality: ModelModality = ModelModality.TEXT
+    size_bytes: int | None = Field(default=None, ge=0)
+    min_memory_bytes: int | None = Field(default=None, ge=0)
+    capabilities: list[str] = Field(default_factory=list)
+    runtimes: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class ModelInstallRequest(BaseModel):
+    source_path: str = Field(min_length=1)
     sha256: str | None = Field(default=None, min_length=64, max_length=64)
 
 
@@ -86,7 +104,18 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
     @api.get("/v1/models")
     async def models(request: Request) -> dict[str, Any]:
         context = _context(request)
-        return {"object": "list", "data": [{"id": model.model_id, "object": "model", "owned_by": "orbit", "capabilities": sorted(model.capabilities)} for model in context.app.models.all()]}
+        if context.app.model_manager is None:
+            raise HTTPException(status_code=503, detail="model manager unavailable")
+        return {"object": "list", "data": [{"id": model.spec.model_id, "object": "model", "owned_by": "orbit", "state": model.state.value, "path": str(model.path) if model.path else None, "capabilities": sorted(model.spec.capabilities)} for model in context.app.model_manager.all()]}
+
+    @api.post("/v1/models")
+    async def register_model(payload: ModelRegisterRequest, request: Request) -> dict[str, Any]:
+        context = _context(request)
+        if context.app.model_manager is None:
+            raise HTTPException(status_code=503, detail="model manager unavailable")
+        spec = ModelSpec(model_id=payload.id, display_name=payload.display_name, modality=payload.modality, size_bytes=payload.size_bytes, min_memory_bytes=payload.min_memory_bytes, capabilities=frozenset(payload.capabilities), runtimes=frozenset(payload.runtimes), tags=frozenset(payload.tags))
+        managed = context.app.model_manager.register(spec)
+        return {"id": managed.spec.model_id, "state": managed.state.value}
 
     @api.get("/v1/models/{model_id}")
     async def model_detail(model_id: str, request: Request) -> dict[str, Any]:
@@ -97,6 +126,31 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         if managed is None:
             raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
         return {"id": model_id, "state": managed.state.value, "path": str(managed.path) if managed.path else None, "error": managed.error, "size_bytes": managed.spec.size_bytes, "modality": managed.spec.modality.value, "capabilities": sorted(managed.spec.capabilities)}
+
+    @api.post("/v1/models/{model_id}/install")
+    async def install_model(model_id: str, payload: ModelInstallRequest, request: Request) -> dict[str, Any]:
+        context = _context(request)
+        if context.app.model_manager is None:
+            raise HTTPException(status_code=503, detail="model manager unavailable")
+        managed = context.app.model_manager.get(model_id)
+        if managed is None:
+            raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
+        try:
+            installed = ModelInstaller(context.app.model_manager).install(managed.spec, Path(payload.source_path), expected_sha256=payload.sha256)
+        except ModelInstallError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": installed.spec.model_id, "state": installed.state.value, "path": str(installed.path), "size_bytes": installed.spec.size_bytes}
+
+    @api.delete("/v1/models/{model_id}")
+    async def remove_model(model_id: str, request: Request) -> dict[str, Any]:
+        context = _context(request)
+        if context.app.model_manager is None:
+            raise HTTPException(status_code=503, detail="model manager unavailable")
+        try:
+            ModelInstaller(context.app.model_manager).remove(model_id)
+        except ModelInstallError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": model_id, "state": "stopped", "removed": True}
 
     @api.post("/v1/models/{model_id}/verify")
     async def verify_model(model_id: str, payload: ModelVerifyRequest, request: Request) -> dict[str, Any]:
