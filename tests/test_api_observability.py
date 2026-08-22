@@ -6,7 +6,7 @@ from orbit.core.config import OrbitConfig
 
 
 def test_request_id_is_propagated_and_metrics_are_exposed(tmp_path) -> None:
-    app = OrbitApp(OrbitConfig.default(data_dir=tmp_path))
+    app = OrbitApp(OrbitConfig.default(home=tmp_path))
     client = TestClient(create_app(app))
 
     response = client.get("/health", headers={"x-request-id": "test-request-1"})
@@ -19,7 +19,7 @@ def test_request_id_is_propagated_and_metrics_are_exposed(tmp_path) -> None:
 
 
 def test_metrics_start_empty(tmp_path) -> None:
-    app = OrbitApp(OrbitConfig.default(data_dir=tmp_path))
+    app = OrbitApp(OrbitConfig.default(home=tmp_path))
     client = TestClient(create_app(app))
     payload = client.get("/v1/metrics").json()
     assert payload == {
