@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-import hashlib
 
-from orbit.core.model_manager import ManagedModel, ModelManager, ModelState
+from orbit.core.model_manager import ModelManager, ModelState
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +52,7 @@ class ModelArtifactManager:
             raise ModelArtifactError(f"artifact checksum mismatch for {model_id}")
         return ArtifactReport(model_id, path, size, checksum, True)
 
-    def activate(self, model_id: str, path: Path, *, expected_sha256: str | None = None) -> ManagedModel:
+    def activate(self, model_id: str, path: Path, *, expected_sha256: str | None = None):
         self.verify(model_id, path, expected_sha256=expected_sha256)
         return self.models.mark_ready(model_id, path)
 
@@ -62,6 +62,7 @@ class ModelArtifactManager:
             raise ModelArtifactError(f"unknown model: {model_id}")
         if model.state is ModelState.RUNNING:
             raise ModelArtifactError(f"cannot remove running model: {model_id}")
-        if model.path is not None and model.path.exists():
-            model.path.unlink()
-        self.models.mark_stopped(model_id)
+        try:
+            self.models.remove(model_id)
+        except (KeyError, OSError, ValueError) as exc:
+            raise ModelArtifactError(str(exc)) from exc
