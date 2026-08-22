@@ -52,6 +52,10 @@ class ModelInstaller:
                 raise ModelInstallError(f"artifact checksum mismatch for {spec.model_id}")
             os.replace(temporary, target)
             return self.artifacts.activate(spec.model_id, target, expected_sha256=expected_sha256)
+        except ModelInstallError:
+            if temporary.exists():
+                temporary.unlink()
+            raise
         except (OSError, ModelArtifactError) as exc:
             if temporary.exists():
                 temporary.unlink()
@@ -60,7 +64,7 @@ class ModelInstaller:
     def remove(self, model_id: str) -> None:
         try:
             self.artifacts.remove(model_id)
-        except (KeyError, ModelArtifactError, OSError) as exc:
+        except (KeyError, ModelArtifactError, OSError, ValueError) as exc:
             raise ModelInstallError(str(exc)) from exc
 
 
