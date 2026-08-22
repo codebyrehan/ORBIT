@@ -25,6 +25,7 @@ jobs:
           record = {"request_id":"recovery-e2e-request","model_id":"demo-model","runtime_name":"cpu","state":"active","created_at":"2026-01-01T00:00:00+00:00","completed_at":None,"error":None,"tokens":0}
           Path("orbit-data/requests.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
           PY
+          chmod 666 "$PWD/orbit-data/requests.jsonl"
       - name: Start recovered container
         run: docker run -d --name orbit-recovery -p 8787:8787 -e ORBIT_API_TOKEN -e ORBIT_RATE_LIMIT_PER_MINUTE -e ORBIT_RATE_LIMIT_BURST -v "$PWD/orbit-data:/var/lib/orbit" orbit-ai:recovery
       - name: Wait for readiness
