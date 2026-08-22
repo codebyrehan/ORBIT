@@ -6,9 +6,9 @@ ORBIT is an open-source platform for running, managing, and orchestrating AI on 
 
 ## Project status
 
-🚧 **Early development — control-plane audit trail complete**
+🚧 **Early development — production control plane + remote runtime adapter**
 
-The project is being built as an independent architecture, with an emphasis on local-first operation, hardware awareness, privacy, modular runtimes, and a simple user experience.
+The control plane, model lifecycle, routing, observability, security, recovery, browser dashboard, and production release gates are implemented. ORBIT can now also connect to any OpenAI-compatible remote inference service without changing the core API.
 
 ## Current foundation
 
@@ -16,7 +16,7 @@ The project is being built as an independent architecture, with an emphasis on l
 - Durable local model catalog
 - Verified local model artifact lifecycle
 - Compatibility scoring and resource placement
-- Runtime adapter contract with a llama.cpp HTTP adapter
+- Runtime adapter contract with llama.cpp and generic OpenAI-compatible remote adapters
 - Local state/configuration primitives
 - Unified HTTP control-plane API
 - OpenAI-compatible model and chat endpoint shapes
@@ -30,6 +30,21 @@ The project is being built as an independent architecture, with an emphasis on l
 - Capability-based permissions
 - Plugin manifest and registry contracts
 - Python 3.11–3.13 CI, linting, type checking, and tests
+
+## Remote AI runtime
+
+ORBIT can use a remote service that implements the OpenAI-compatible API contract. Configure:
+
+```bash
+export ORBIT_OPENAI_API_KEY="your-provider-key"
+export ORBIT_OPENAI_BASE_URL="https://api.openai.com/v1"
+export ORBIT_OPENAI_MODEL="your-model-id"
+export ORBIT_OPENAI_RUNTIME_NAME="openai-compatible"
+```
+
+When these variables are present and no model is already registered, ORBIT automatically registers the configured remote model and routes inference through the adapter. The adapter uses `/models` for health checks and `/chat/completions` for generation. API keys are read only from process environment and are never written to the audit log.
+
+This same adapter works with OpenAI-compatible self-hosted gateways and providers; only `ORBIT_OPENAI_BASE_URL` and credentials need to change.
 
 ## Control-plane security and auditability
 
@@ -69,7 +84,6 @@ Chat requests are resolved through the model catalog, resource scheduler, and ru
 ## Planned capabilities
 
 - Remote model registries and resumable downloads
-- Automatic runtime selection and model placement
 - Native chat and projects
 - Knowledge and retrieval
 - Agents, tools, MCP, and memory
