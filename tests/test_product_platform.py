@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from fastapi.responses import JSONResponse
 
 from orbit.api.platform import router
 from orbit.api.server import create_app
@@ -13,6 +14,11 @@ def _client(tmp_path):
     orbit = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit", api_key="secret"))
     api = create_app(orbit)
     api.include_router(router)
+
+    @api.exception_handler(PermissionError)
+    async def permission_error(request, exc):
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
     return TestClient(api)
 
 
