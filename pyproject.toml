@@ -20,7 +20,7 @@ dev = [
   "build>=1.2",
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
-  "ruff>=0.6",
+  "ruff==0.16.4",
   "mypy>=1.10",
   "httpx>=0.27,<1",
 ]
@@ -39,8 +39,12 @@ addopts = "-q"
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
 [tool.ruff.lint.isort]
 from-first = false
+force-sort-within-sections = false
 
 [tool.mypy]
 python_version = "3.11"
