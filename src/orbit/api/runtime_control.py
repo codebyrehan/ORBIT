@@ -23,7 +23,7 @@ class RuntimeExecutionError(RuntimeError):
 
 
 class RuntimeExecutor:
-    """Execute generations with timeout and concurrency bounds."""
+    """Execute generations with timeout, concurrency, and caller cancellation."""
 
     def __init__(self, runtime: RuntimeAdapter, *, max_concurrency: int = 1, timeout_seconds: float = 120.0) -> None:
         if max_concurrency < 1:
@@ -34,8 +34,12 @@ class RuntimeExecutor:
         self.timeout_seconds = timeout_seconds
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
-    async def stream(self, request: GenerationRequest) -> AsyncIterator[str]:
-        request_id = uuid4().hex
+    @staticmethod
+    def _request_id(request_id: str | None) -> str:
+        return request_id or uuid4().hex
+
+    async def stream(self, request: GenerationRequest, *, request_id: str | None = None) -> AsyncIterator[str]:
+        execution_id = self._request_id(request_id)
         async with self._semaphore:
             try:
                 async with asyncio.timeout(self.timeout_seconds):
@@ -44,12 +48,12 @@ class RuntimeExecutor:
             except asyncio.CancelledError:
                 raise
             except TimeoutError as exc:
-                raise RuntimeExecutionError(f"generation timed out: {request_id}") from exc
+                raise RuntimeExecutionError(f"generation timed out: {execution_id}") from exc
             except Exception as exc:
-                raise RuntimeExecutionError(f"generation failed: {request_id}") from exc
+                raise RuntimeExecutionError(f"generation failed: {execution_id}") from exc
 
-    async def execute(self, request: GenerationRequest) -> GenerationResult:
-        request_id = uuid4().hex
+    async def execute(self, request: GenerationRequest, *, request_id: str | None = None) -> GenerationResult:
+        execution_id = self._request_id(request_id)
         started = monotonic()
         chunks: list[str] = []
         async with self._semaphore:
@@ -60,7 +64,7 @@ class RuntimeExecutor:
             except asyncio.CancelledError:
                 raise
             except TimeoutError as exc:
-                raise RuntimeExecutionError(f"generation timed out: {request_id}") from exc
+                raise RuntimeExecutionError(f"generation timed out: {execution_id}") from exc
             except Exception as exc:
-                raise RuntimeExecutionError(f"generation failed: {request_id}") from exc
-        return GenerationResult(request_id, "".join(chunks), (monotonic() - started) * 1000)
+                raise RuntimeExecutionError(f"generation failed: {execution_id}") from exc
+        return GenerationResult(execution_id, "".join(chunks), (monotonic() - started) * 1000)
