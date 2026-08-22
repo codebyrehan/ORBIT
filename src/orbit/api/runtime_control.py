@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import monotonic
 from uuid import uuid4
-
-import asyncio
 
 from orbit.core.runtime import GenerationRequest, RuntimeAdapter
 
