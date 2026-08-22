@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from time import monotonic
-from typing import Callable
 
 
 class HealthStatus(StrEnum):
@@ -39,7 +39,7 @@ class HealthRegistry:
             started = monotonic()
             try:
                 result = callback()
-            except Exception as exc:
+            except (RuntimeError, ValueError, OSError, TypeError) as exc:
                 result = HealthCheck(name=name, status=HealthStatus.UNHEALTHY, detail=str(exc))
             if result.name != name:
                 result = HealthCheck(name=name, status=result.status, detail=result.detail, latency_ms=result.latency_ms)
