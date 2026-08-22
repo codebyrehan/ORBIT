@@ -9,7 +9,7 @@ from orbit.core.runtime_manager import RuntimeManager
 
 class FakeRuntime:
     def __init__(self, name: str) -> None:
-        self.info = RuntimeInfo(name=name, version="test")
+        self.info = RuntimeInfo(name=name, version="test", capabilities=frozenset())
 
     async def health(self) -> bool:
         return True
