@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from orbit.api.observability import metrics_for
 from orbit.api.rate_limit import RateLimiter
 from orbit.api.runtime_control import RuntimeExecutionError, RuntimeExecutor
+from orbit.audit import AuditLog
 from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
 from orbit.core.health import HealthStatus
@@ -97,17 +98,20 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
     api = FastAPI(title="ORBIT API", version="0.1.0", docs_url="/docs")
     api.state.orbit_context = ApiContext(orbit)
     api.state.orbit_metrics = RuntimeMetrics()
+    api.state.orbit_audit = AuditLog(orbit.config.data_dir / "audit.jsonl")
     limiter = RateLimiter(orbit.config.rate_limit_per_minute, orbit.config.rate_limit_burst)
 
     @api.middleware("http")
     async def request_security(request: Request, call_next: Any) -> Any:
         """Authenticate and rate-limit control-plane requests."""
+        request.state.authenticated = orbit.config.api_key is None
         if request.url.path.startswith("/v1/"):
             if orbit.config.api_key is not None:
                 authorization = request.headers.get("authorization", "")
                 scheme, _, token = authorization.partition(" ")
                 if scheme.lower() != "bearer" or not token or not secrets.compare_digest(token, orbit.config.api_key):
                     return JSONResponse(status_code=401, content={"detail": "authentication required"}, headers={"WWW-Authenticate": "Bearer"})
+                request.state.authenticated = True
             identity = request.headers.get("authorization") or (request.client.host if request.client else "unknown")
             allowed, retry_after = limiter.allow(identity)
             if not allowed:
@@ -120,6 +124,17 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         request.state.request_id = trace.request_id
         response = await call_next(request)
         response.headers["x-request-id"] = trace.request_id
+        return response
+
+    @api.middleware("http")
+    async def request_audit(request: Request, call_next: Any) -> Any:
+        trace = RequestTrace(getattr(request.state, "request_id", None))
+        try:
+            response = await call_next(request)
+        except Exception:
+            api.state.orbit_audit.record(request_id=trace.request_id, method=request.method, path=request.url.path, status_code=500, duration_ms=trace.elapsed_ms, authenticated=bool(getattr(request.state, "authenticated", False)))
+            raise
+        api.state.orbit_audit.record(request_id=trace.request_id, method=request.method, path=request.url.path, status_code=response.status_code, duration_ms=trace.elapsed_ms, authenticated=bool(getattr(request.state, "authenticated", False)))
         return response
 
     @api.get("/health")
@@ -139,6 +154,14 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
     @api.get("/v1/metrics")
     async def metrics(request: Request) -> dict[str, float | int]:
         return metrics_for(request).snapshot()
+
+    @api.get("/v1/audit/events")
+    async def audit_events(request: Request, limit: int = 100) -> dict[str, Any]:
+        try:
+            events = api.state.orbit_audit.recent(limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"object": "list", "data": events}
 
     @api.get("/v1/models")
     async def models(request: Request) -> dict[str, Any]:
