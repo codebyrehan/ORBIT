@@ -1,25 +1,28 @@
 from fastapi.testclient import TestClient
 
-from orbit.api.server import create_app
+from orbit.api import create_app
 from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
 from orbit.core.models import ModelSpec
 
 
-def test_health_and_system_endpoints(tmp_path):
+def test_health_readiness_and_system_endpoints(tmp_path) -> None:
     app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit"))
     client = TestClient(create_app(app))
 
     health = client.get("/health")
+    ready = client.get("/ready")
     system = client.get("/v1/system")
 
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
+    assert ready.status_code == 200
+    assert ready.json() == {"ready": True}
     assert system.status_code == 200
     assert "architecture" in system.json()
 
 
-def test_models_endpoint_exposes_catalog(tmp_path):
+def test_models_endpoint_exposes_catalog(tmp_path) -> None:
     app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit"))
     app.start()
     app.models.register(ModelSpec("demo", "Demo", capabilities=frozenset({"chat"})))
@@ -31,7 +34,7 @@ def test_models_endpoint_exposes_catalog(tmp_path):
     assert response.json()["data"][0]["id"] == "demo"
 
 
-def test_chat_requires_runtime(tmp_path):
+def test_chat_requires_runtime(tmp_path) -> None:
     app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit"))
     app.start()
     app.models.register(ModelSpec("demo", "Demo"))
@@ -43,3 +46,17 @@ def test_chat_requires_runtime(tmp_path):
     )
 
     assert response.status_code == 503
+
+
+def test_chat_rejects_unknown_model(tmp_path) -> None:
+    app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit"))
+    app.start()
+    client = TestClient(create_app(app))
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "missing", "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "unknown model: missing"
