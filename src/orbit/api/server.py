@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import secrets
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from orbit.api.observability import metrics_for
@@ -74,7 +75,6 @@ def _context(request: Request) -> ApiContext:
 
 
 def _sync_catalog_to_manager(app: OrbitApp) -> None:
-    """Bring externally-mutated in-memory catalog entries into lifecycle state."""
     if app.model_manager is None:
         return
     for spec in app.models.all():
@@ -96,6 +96,16 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
     api = FastAPI(title="ORBIT API", version="0.1.0", docs_url="/docs")
     api.state.orbit_context = ApiContext(orbit)
     api.state.orbit_metrics = RuntimeMetrics()
+
+    @api.middleware("http")
+    async def request_security(request: Request, call_next: Any) -> Any:
+        """Protect control-plane endpoints when an API key is configured."""
+        if request.url.path.startswith("/v1/") and orbit.config.api_key is not None:
+            authorization = request.headers.get("authorization", "")
+            scheme, _, token = authorization.partition(" ")
+            if scheme.lower() != "bearer" or not token or not secrets.compare_digest(token, orbit.config.api_key):
+                return JSONResponse(status_code=401, content={"detail": "authentication required"}, headers={"WWW-Authenticate": "Bearer"})
+        return await call_next(request)
 
     @api.middleware("http")
     async def request_observability(request: Request, call_next: Any) -> Any:
