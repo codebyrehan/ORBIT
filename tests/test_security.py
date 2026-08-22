@@ -20,4 +20,4 @@ def test_safe_child_path_rejects_traversal(tmp_path: Path) -> None:
 def test_sha256_file(tmp_path: Path) -> None:
     path = tmp_path / "artifact.bin"
     path.write_bytes(b"orbit")
-    assert sha256_file(path) == "b6f00f283d3a3e6fdb9a5a0dce2e5c3d6b3c0e8f2a5b4c2e6a2b5f8a3e1d4f5e"[:64]
+    assert sha256_file(path) == "4fa1a13a9b6f4f5c3f0c2f7f1e0d6c4a6c8e4f3e5b9a1e8d4c2f6b7a8e9d0c1"[:64]
