@@ -12,7 +12,7 @@ def test_dashboard_and_authenticated_session(tmp_path, monkeypatch) -> None:
     app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit", api_key="secret"))
     client = TestClient(create_app(app))
 
-    root = client.get("/")
+    root = client.get("/", headers={"Accept": "text/html"})
     assert root.status_code == 200
     assert "ORBIT" in root.text
     assert "Inference" in root.text
