@@ -20,7 +20,7 @@ class OrbitConfig:
     privacy_mode: str = "strict"
 
     @classmethod
-    def default(cls, home: Path | None = None) -> "OrbitConfig":
+    def default(cls, home: Path | None = None) -> OrbitConfig:
         base = home if home is not None else Path.home()
         return cls(data_dir=base / ".orbit")
 
