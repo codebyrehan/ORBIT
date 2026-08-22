@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from orbit.api.observability import metrics_for
@@ -33,6 +35,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, gt=0)
     runtime: str | None = Field(default=None, min_length=1)
+    stream: bool = False
 
 
 class ModelVerifyRequest(BaseModel):
@@ -81,6 +84,10 @@ def _sync_catalog_to_manager(app: OrbitApp) -> None:
 
 def _model_payload(model: Any) -> dict[str, Any]:
     return {"id": model.spec.model_id, "object": "model", "owned_by": "orbit", "state": model.state.value, "path": str(model.path) if model.path else None, "capabilities": sorted(model.spec.capabilities)}
+
+
+def _sse(payload: dict[str, Any]) -> bytes:
+    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
 
 
 def create_app(app: OrbitApp | None = None) -> FastAPI:
@@ -198,7 +205,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         return {"platform": hardware.platform, "architecture": hardware.architecture, "memory_bytes": hardware.memory_bytes, "accelerators": [{"vendor": accelerator.vendor.value, "name": accelerator.name, "memory_bytes": accelerator.memory_bytes} for accelerator in hardware.accelerators]}
 
     @api.post("/v1/chat/completions")
-    async def chat_completion(request: ChatCompletionRequest, http_request: Request) -> dict[str, Any]:
+    async def chat_completion(request: ChatCompletionRequest, http_request: Request) -> Any:
         context = _context(http_request)
         _sync_catalog_to_manager(context.app)
         if context.app.router is None:
@@ -211,14 +218,37 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
         generation = GenerationRequest(prompt=prompt, model=decision.model_id, temperature=request.temperature, max_tokens=request.max_tokens)
-        try:
-            result = await RuntimeExecutor(decision.plan.runtime).execute(generation)
-        except RuntimeExecutionError as exc:
-            metrics_for(http_request).record(latency_ms=trace.elapsed_ms, tokens=0, failed=True)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        metrics_for(http_request).record(latency_ms=result.duration_ms, tokens=len(result.text.split()))
-        return {"id": result.request_id, "object": "chat.completion", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "message": {"role": "assistant", "content": result.text}, "finish_reason": "stop"}], "usage": {"completion_ms": round(result.duration_ms, 3)}}
+        executor = RuntimeExecutor(decision.plan.runtime)
+
+        if not request.stream:
+            try:
+                result = await executor.execute(generation)
+            except RuntimeExecutionError as exc:
+                metrics_for(http_request).record(latency_ms=trace.elapsed_ms, tokens=0, failed=True)
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            metrics_for(http_request).record(latency_ms=result.duration_ms, tokens=len(result.text.split()))
+            return {"id": result.request_id, "object": "chat.completion", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "message": {"role": "assistant", "content": result.text}, "finish_reason": "stop"}], "usage": {"completion_ms": round(result.duration_ms, 3)}}
+
+        async def event_stream() -> AsyncIterator[bytes]:
+            request_id = http_request.state.request_id
+            completion_id = f"chatcmpl-{request_id}"
+            token_count = 0
+            started = trace
+            try:
+                yield _sse({"id": completion_id, "object": "chat.completion.chunk", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]})
+                async for chunk in executor.stream(generation):
+                    token_count += len(chunk.split())
+                    yield _sse({"id": completion_id, "object": "chat.completion.chunk", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}]})
+                yield _sse({"id": completion_id, "object": "chat.completion.chunk", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+                metrics_for(http_request).record(latency_ms=started.elapsed_ms, tokens=token_count)
+                yield b"data: [DONE]\n\n"
+            except RuntimeExecutionError:
+                metrics_for(http_request).record(latency_ms=started.elapsed_ms, tokens=token_count, failed=True)
+                yield _sse({"id": completion_id, "object": "error", "error": {"message": "generation failed", "type": "runtime_error"}})
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
     return api
 
