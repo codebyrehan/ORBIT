@@ -51,7 +51,8 @@ jobs:
         run: |
           statuses=$(for i in $(seq 1 21); do curl --silent --output /dev/null --write-out '%{http_code}\n' -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics; done)
           echo "$statuses"
-          echo "$statuses" | grep -qx '429'
+          echo "$statuses" | grep -q '^429$'
+          sleep 2
           curl --silent --dump-header /tmp/rate-headers -o /dev/null -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics || true
           grep -qi '^Retry-After:' /tmp/rate-headers
 
