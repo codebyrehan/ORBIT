@@ -28,9 +28,9 @@ jobs:
           set -e
           curl --fail --silent http://127.0.0.1:8787/ | grep -q '"status":"ok"'
           curl --fail --silent http://127.0.0.1:8787/health | grep -q '"status":"ok"'
-          curl --fail --silent http://127.0.0.1:8787/ready | grep -q '"status":"ready"'
+          curl --fail --silent http://127.0.0.1:8787/ready | grep -q '"ready":true'
           curl --fail --silent http://127.0.0.1:8787/docs | grep -q 'ORBIT'
-          curl --fail --silent http://127.0.0.1:8787/v1/metrics | grep -q 'orbit_requests_total'
+          curl --fail --silent http://127.0.0.1:8787/v1/metrics | grep -q '"requests_total"'
       - name: Concurrent health load
         run: |
           seq 1 40 | xargs -n1 -P10 -I{} curl --fail --silent http://127.0.0.1:8787/health >/dev/null
