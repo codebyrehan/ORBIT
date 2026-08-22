@@ -16,7 +16,7 @@ from orbit.core.config import OrbitConfig
 from orbit.core.health import HealthStatus
 from orbit.core.model_artifacts import ModelArtifactError, ModelArtifactManager
 from orbit.core.runtime import GenerationRequest
-from orbit.observability import RequestTrace, configure_logging
+from orbit.observability import RequestTrace, RuntimeMetrics, configure_logging
 
 
 class ChatMessage(BaseModel):
@@ -55,10 +55,10 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
     orbit = app or OrbitApp(OrbitConfig.default())
     api = FastAPI(title="ORBIT API", version="0.1.0", docs_url="/docs")
     api.state.orbit_context = ApiContext(orbit)
-    api.state.orbit_metrics = __import__("orbit.observability", fromlist=["RuntimeMetrics"]).RuntimeMetrics()
+    api.state.orbit_metrics = RuntimeMetrics()
 
     @api.middleware("http")
-    async def request_observability(request: Request, call_next):
+    async def request_observability(request: Request, call_next: Any) -> Any:
         trace = RequestTrace(request.headers.get("x-request-id"))
         request.state.request_id = trace.request_id
         response = await call_next(request)
