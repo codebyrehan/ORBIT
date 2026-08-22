@@ -11,7 +11,6 @@ def test_restart_reconciles_active_requests_to_failed(tmp_path: Path) -> None:
     journal = tmp_path / "requests.jsonl"
     manager = RequestManager(journal_path=journal)
     manager.start("req-1", "model-a", "runtime-a")
-    manager.complete("req-2", tokens=3) if manager.get("req-2") else None
 
     recovered, report = RecoveryManager(tmp_path).recover_requests()
 
@@ -21,7 +20,7 @@ def test_restart_reconciles_active_requests_to_failed(tmp_path: Path) -> None:
     assert record.error == "request interrupted by process restart"
     assert report.recovered_requests == 1
     assert report.active_requests == 0
-    assert report.failed_requests >= 1
+    assert report.failed_requests == 1
 
 
 def test_restart_recovery_is_idempotent(tmp_path: Path) -> None:
@@ -54,15 +53,19 @@ def test_recovery_ignores_truncated_and_invalid_journal_lines(tmp_path: Path) ->
 
     manager, report = RecoveryManager(tmp_path).recover_requests()
 
-    assert manager.get("req-1") is not None
-    assert manager.get("req-1").state == "completed"
+    record = manager.get("req-1")
+    assert record is not None
+    assert record.state == "completed"
     assert report.recovered_requests == 0
     assert report.active_requests == 0
 
 
-def test_unresolved_only_returns_active_records(tmp_path: Path) -> None:
-    journal = tmp_path / "requests.jsonl"
-    manager = RequestManager(journal_path=journal)
+def test_unresolved_returns_only_active_records(tmp_path: Path) -> None:
+    manager = RequestManager()
     manager.start("req-1", "model-a", "runtime-a")
+    manager.complete("req-1", tokens=1)
+    manager.start("req-2", "model-a", "runtime-a")
 
-    assert RecoveryManager.unresolved(manager) == []
+    unresolved = RecoveryManager.unresolved(manager)
+
+    assert [record.request_id for record in unresolved] == ["req-2"]
