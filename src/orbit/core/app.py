@@ -91,7 +91,6 @@ class OrbitApp:
         self.health.register("scheduler", lambda: HealthCheck("scheduler", HealthStatus.HEALTHY if self.scheduler is not None else HealthStatus.UNHEALTHY, "resource scheduler ready" if self.scheduler is not None else "scheduler unavailable"))
         self.health.register("orchestrator", lambda: HealthCheck("orchestrator", HealthStatus.HEALTHY if self.orchestrator is not None else HealthStatus.UNHEALTHY, "inference orchestration ready" if self.orchestrator is not None else "orchestrator unavailable"))
         self.health.register("router", lambda: HealthCheck("router", HealthStatus.HEALTHY if self.router is not None else HealthStatus.UNHEALTHY, "inference router ready" if self.router is not None else "router unavailable"))
-        self.health.register("runtimes", lambda: HealthCheck("runtimes", HealthStatus.HEALTHY if self.runtimes.names() else HealthStatus.UNHEALTHY, f"{len(self.runtimes.names())} runtime adapters registered"))
 
     def save_models(self) -> None:
         if self.model_store is None:
