@@ -25,19 +25,19 @@ class ModelStore:
         for item in raw:
             if not isinstance(item, dict):
                 raise ValueError("each model catalog entry must be an object")
-            catalog.register(
-                ModelSpec(
-                    model_id=str(item["model_id"]),
-                    display_name=str(item["display_name"]),
-                    modality=ModelModality(str(item.get("modality", "text"))),
-                    size_bytes=item.get("size_bytes"),
-                    min_memory_bytes=item.get("min_memory_bytes"),
-                    capabilities=frozenset(item.get("capabilities", [])),
-                    runtimes=frozenset(item.get("runtimes", [])),
-                    tags=frozenset(item.get("tags", [])),
-                )
-            )
+            catalog.register(self._from_dict(item))
         return catalog
+
+    def all(self) -> tuple[ModelSpec, ...]:
+        return self.load().all()
+
+    def get(self, model_id: str) -> ModelSpec | None:
+        return self.load().get(model_id)
+
+    def upsert(self, model: ModelSpec) -> None:
+        catalog = self.load()
+        catalog.register(model)
+        self.save(catalog)
 
     def save(self, catalog: ModelCatalog) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -51,3 +51,17 @@ class ModelStore:
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         temporary.replace(self.path)
+
+    @staticmethod
+    def _from_dict(item: dict[str, object]) -> ModelSpec:
+        return ModelSpec(
+            model_id=str(item["model_id"]),
+            display_name=str(item["display_name"]),
+            modality=ModelModality(str(item.get("modality", "text"))),
+            size_bytes=item.get("size_bytes") if isinstance(item.get("size_bytes"), int) else None,
+            min_memory_bytes=item.get("min_memory_bytes") if isinstance(item.get("min_memory_bytes"), int) else None,
+            capabilities=frozenset(item.get("capabilities", [])),
+            runtimes=frozenset(item.get("runtimes", [])),
+            tags=frozenset(item.get("tags", [])),
+            local_path=item.get("local_path") if isinstance(item.get("local_path"), str) else None,
+        )
