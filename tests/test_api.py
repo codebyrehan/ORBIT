@@ -41,6 +41,21 @@ def test_configured_api_key_protects_control_plane_but_not_health(tmp_path) -> N
     assert valid.status_code == 200
 
 
+def test_rate_limit_returns_retry_after_and_does_not_affect_health(tmp_path) -> None:
+    app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit", rate_limit_per_minute=1, rate_limit_burst=1))
+    client = TestClient(create_app(app))
+
+    first = client.get("/v1/models")
+    second = client.get("/v1/models")
+    health = client.get("/health")
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["detail"] == "rate limit exceeded"
+    assert int(second.headers["retry-after"]) >= 1
+    assert health.status_code == 200
+
+
 def test_models_endpoint_exposes_catalog(tmp_path) -> None:
     app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit"))
     app.start()
