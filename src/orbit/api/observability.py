@@ -1,4 +1,4 @@
-"""API-facing observability endpoints."""
+"""API-facing observability endpoints and export helpers."""
 
 from __future__ import annotations
 
@@ -15,6 +15,11 @@ def metrics_for(request: Request) -> RuntimeMetrics:
         metrics = RuntimeMetrics()
         request.app.state.orbit_metrics = metrics
     return metrics
+
+
+def prometheus_for(request: Request) -> str:
+    """Return the process-local metrics in Prometheus text format."""
+    return metrics_for(request).prometheus()
 
 
 @router.get("/v1/metrics")
