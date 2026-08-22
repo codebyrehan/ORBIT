@@ -28,9 +28,14 @@ class InferenceOrchestrator:
         self.runtimes = runtimes
 
     async def plan(self, model: ModelSpec, runtime_name: str | None = None) -> ExecutionPlan:
-        candidates = (runtime_name,) if runtime_name else tuple(model.runtimes)
-        if not candidates:
+        if runtime_name:
+            candidates = (runtime_name,)
+        elif model.runtimes:
+            candidates = tuple(sorted(model.runtimes))
+        else:
             candidates = self.runtimes.names()
+
+        plans: list[ExecutionPlan] = []
         for name in candidates:
             adapter = self.runtimes.get(name)
             if adapter is None:
@@ -40,9 +45,14 @@ class InferenceOrchestrator:
                 continue
             if not await adapter.health():
                 continue
-            self.runtimes.select(name)
-            return ExecutionPlan(model=model, runtime=adapter, placement=placement)
-        raise RuntimeError(f"no healthy compatible runtime available for model: {model.model_id}")
+            plans.append(ExecutionPlan(model=model, runtime=adapter, placement=placement))
+
+        if not plans:
+            raise RuntimeError(f"no healthy compatible runtime available for model: {model.model_id}")
+
+        selected = max(plans, key=lambda plan: (plan.placement.score, plan.runtime.info.name))
+        self.runtimes.select(selected.runtime.info.name)
+        return selected
 
     async def generate(
         self,
