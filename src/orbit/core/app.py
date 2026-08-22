@@ -46,6 +46,7 @@ class OrbitApp:
         self.model_manager = ModelManager(self.model_store, self.config.data_dir / "models")
         self.orchestrator = InferenceOrchestrator(self.scheduler, self.runtimes)
         self.router = InferenceRouter(self.models, self.orchestrator)
+        self.request_manager = RequestManager(journal_path=self.config.data_dir / "requests.jsonl")
         self._register_health_checks()
         self.state = LifecycleState.READY
 
