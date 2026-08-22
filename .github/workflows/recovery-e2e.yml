@@ -1,0 +1,93 @@
+name: Recovery E2E
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  recovery-e2e:
+    runs-on: ubuntu-latest
+    env:
+      ORBIT_API_TOKEN: orbit-e2e-token-0123456789abcdef0123456789abcdef
+      ORBIT_RATE_LIMIT_PER_MINUTE: "120"
+      ORBIT_RATE_LIMIT_BURST: "20"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build -t orbit-ai:recovery .
+      - name: Seed interrupted request journal
+        run: |
+          mkdir -p "$PWD/orbit-data"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          record = {
+              "request_id": "recovery-e2e-request",
+              "model_id": "demo-model",
+              "runtime_name": "cpu",
+              "state": "active",
+              "created_at": "2026-01-01T00:00:00+00:00",
+              "completed_at": None,
+              "error": None,
+              "tokens": 0,
+          }
+          Path("orbit-data/requests.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+          PY
+      - name: Start recovered container
+        run: |
+          docker run -d --name orbit-recovery \
+            -p 8787:8787 \
+            -e ORBIT_API_TOKEN \
+            -e ORBIT_RATE_LIMIT_PER_MINUTE \
+            -e ORBIT_RATE_LIMIT_BURST \
+            -v "$PWD/orbit-data:/var/lib/orbit" \
+            orbit-ai:recovery
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8787/health >/tmp/health.json; then
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs orbit-recovery
+          exit 1
+      - name: Verify interrupted request was recovered
+        run: |
+          response=$(curl --fail --silent \
+            -H "Authorization: Bearer $ORBIT_API_TOKEN" \
+            http://127.0.0.1:8787/v1/requests/recovery-e2e-request)
+          echo "$response"
+          echo "$response" | grep -q '"state":"failed"'
+          echo "$response" | grep -q 'request interrupted by process restart'
+      - name: Verify recovery is idempotent across restart
+        run: |
+          docker rm -f orbit-recovery
+          docker run -d --name orbit-recovery \
+            -p 8787:8787 \
+            -e ORBIT_API_TOKEN \
+            -e ORBIT_RATE_LIMIT_PER_MINUTE \
+            -e ORBIT_RATE_LIMIT_BURST \
+            -v "$PWD/orbit-data:/var/lib/orbit" \
+            orbit-ai:recovery
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8787/health >/dev/null; then break; fi
+            sleep 2
+          done
+          response=$(curl --fail --silent \
+            -H "Authorization: Bearer $ORBIT_API_TOKEN" \
+            http://127.0.0.1:8787/v1/requests/recovery-e2e-request)
+          echo "$response"
+          echo "$response" | grep -q '"state":"failed"'
+          echo "$response" | grep -q 'request interrupted by process restart'
+      - name: Validate persisted recovery journal
+        run: |
+          grep -q 'recovery-e2e-request' orbit-data/requests.jsonl
+          grep -q 'request interrupted by process restart' orbit-data/requests.jsonl
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs orbit-recovery || true
+      - name: Stop container
+        if: always()
+        run: docker rm -f orbit-recovery || true
