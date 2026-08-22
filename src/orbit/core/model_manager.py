@@ -7,10 +7,10 @@ execution independently replaceable.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterable
 
 from orbit.core.model_store import ModelStore
 from orbit.core.models import ModelSpec
@@ -45,11 +45,9 @@ class ModelManager:
 
     def _restore(self) -> None:
         for spec in self.store.all():
-            self._states[spec.model_id] = ManagedModel(
-                spec=spec,
-                state=ModelState.READY if spec.local_path and Path(spec.local_path).exists() else ModelState.REGISTERED,
-                path=Path(spec.local_path) if spec.local_path else None,
-            )
+            path = Path(spec.local_path) if spec.local_path else None
+            state = ModelState.READY if path and path.exists() else ModelState.REGISTERED
+            self._states[spec.model_id] = ManagedModel(spec=spec, state=state, path=path)
 
     def register(self, spec: ModelSpec) -> ManagedModel:
         self.store.upsert(spec)
