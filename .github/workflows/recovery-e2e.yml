@@ -18,6 +18,7 @@ jobs:
       - name: Seed interrupted request journal
         run: |
           mkdir -p "$PWD/orbit-data"
+          chmod 777 "$PWD/orbit-data"
           python - <<'PY'
           import json
           from pathlib import Path
