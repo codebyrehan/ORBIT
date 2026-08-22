@@ -29,6 +29,15 @@ class ModelSpec:
     runtimes: frozenset[str] = field(default_factory=frozenset)
     tags: frozenset[str] = field(default_factory=frozenset)
 
+    def __post_init__(self) -> None:
+        if not self.model_id.strip():
+            raise ValueError("model_id must not be empty")
+        if not self.display_name.strip():
+            raise ValueError("display_name must not be empty")
+        for name, value in (("size_bytes", self.size_bytes), ("min_memory_bytes", self.min_memory_bytes)):
+            if value is not None and value < 0:
+                raise ValueError(f"{name} must be non-negative")
+
     def compatibility_score(self, hardware: HardwareProfile, runtime: str) -> float:
         """Return a conservative 0..1 score for scheduling decisions."""
         if self.runtimes and runtime not in self.runtimes:
@@ -58,10 +67,14 @@ class ModelCatalog:
     def all(self) -> tuple[ModelSpec, ...]:
         return tuple(self._models.values())
 
-    def recommend(self, hardware: HardwareProfile, runtime: str, limit: int = 5) -> tuple[ModelSpec, ...]:
-        ranked = sorted(
-            self._models.values(),
-            key=lambda model: model.compatibility_score(hardware, runtime),
-            reverse=True,
-        )
-        return tuple(model for model in ranked if model.compatibility_score(hardware, runtime) > 0)[:limit]
+    def recommend(
+        self, hardware: HardwareProfile, runtime: str, limit: int = 5
+    ) -> tuple[ModelSpec, ...]:
+        if limit <= 0:
+            return ()
+        scored = [
+            (model, model.compatibility_score(hardware, runtime))
+            for model in self._models.values()
+        ]
+        ranked = sorted(scored, key=lambda item: item[1], reverse=True)
+        return tuple(model for model, score in ranked if score > 0)[:limit]
