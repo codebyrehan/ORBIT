@@ -6,7 +6,7 @@ ORBIT is an open-source platform for running, managing, and orchestrating AI on 
 
 ## Project status
 
-🚧 **Early development — control-plane security phase complete**
+🚧 **Early development — control-plane rate limiting complete**
 
 The project is being built as an independent architecture, with an emphasis on local-first operation, hardware awareness, privacy, modular runtimes, and a simple user experience.
 
@@ -14,6 +14,7 @@ The project is being built as an independent architecture, with an emphasis on l
 
 - Hardware discovery and normalized resource profiling
 - Durable local model catalog
+- Verified local model artifact lifecycle
 - Compatibility scoring and resource placement
 - Runtime adapter contract with a llama.cpp HTTP adapter
 - Local state/configuration primitives
@@ -22,6 +23,8 @@ The project is being built as an independent architecture, with an emphasis on l
 - Deterministic runtime routing with health/resource checks
 - Routed streaming chat completions using Server-Sent Events
 - Optional constant-time bearer API-key authentication for `/v1/*`
+- Configurable process-local token-bucket rate limiting for `/v1/*`
+- Health/readiness probes excluded from authentication and rate limiting
 - Capability-based permissions
 - Plugin manifest and registry contracts
 - Python 3.11–3.13 CI, linting, type checking, and tests
@@ -30,7 +33,7 @@ The project is being built as an independent architecture, with an emphasis on l
 
 ORBIT can protect its versioned control-plane endpoints with a local API key. Set `OrbitConfig.api_key` to enable authentication. Clients must then send `Authorization: Bearer <api-key>` for `/v1/*` requests. Health and readiness endpoints remain unauthenticated so local process supervisors can probe the service.
 
-Authentication uses constant-time token comparison and returns `401` with a `WWW-Authenticate: Bearer` challenge when credentials are absent or invalid. Authentication is intentionally opt-in so existing local development and health checks remain frictionless.
+The control plane also supports `rate_limit_per_minute` and `rate_limit_burst`. The limiter is an in-process token bucket keyed by the authenticated identity, or by client address when authentication is disabled. A distributed deployment should enforce distributed limits at its reverse proxy or service boundary.
 
 ## Model lifecycle
 
@@ -43,8 +46,6 @@ The model lifecycle is now a complete local control-plane flow:
 5. Restore lifecycle state from durable metadata after restart.
 6. Inspect lifecycle state with `GET /v1/models/{id}` or `GET /v1/models`.
 7. Remove stopped models with `DELETE /v1/models/{id}`.
-
-Model installation is deliberately local-only at this stage. Remote registries and download adapters remain separate future capabilities.
 
 ## Inference routing and streaming
 
