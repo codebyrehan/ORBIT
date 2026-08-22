@@ -1,9 +1,4 @@
-"""Configuration primitives for ORBIT.
-
-The first foundation release deliberately keeps configuration small and typed.
-Higher-level configuration sources can be layered on top later without making
-environment variables the architecture's primary interface.
-"""
+"""Configuration primitives for ORBIT."""
 
 from __future__ import annotations
 
@@ -18,6 +13,7 @@ class OrbitConfig:
     data_dir: Path
     log_level: str = "INFO"
     privacy_mode: str = "strict"
+    api_key: str | None = None
 
     @classmethod
     def default(cls, home: Path | None = None) -> OrbitConfig:
