@@ -1,3 +1,7 @@
+import os
+
+from orbit.core.app import OrbitApp
+from orbit.core.config import OrbitConfig
 from orbit.core.hardware import Accelerator, AcceleratorVendor, HardwareProfile
 from orbit.core.models import ModelCatalog, ModelSpec
 from orbit.core.runtime import RuntimeAdapter, RuntimeInfo
@@ -52,3 +56,19 @@ def test_runtime_manager_selects_registered_adapter():
     manager.register(runtime)
     assert manager.select("fake") is runtime
     assert manager.active is runtime
+
+
+def test_openai_compatible_runtime_can_be_configured_without_api_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORBIT_OPENAI_BASE_URL", "http://localhost:8000/v1")
+    monkeypatch.setenv("ORBIT_OPENAI_MODEL", "local-model")
+    monkeypatch.delenv("ORBIT_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ORBIT_LLAMA_CPP_URL", raising=False)
+    monkeypatch.delenv("ORBIT_LLAMA_CPP_MODEL", raising=False)
+    monkeypatch.setenv("ORBIT_ENABLE_DEMO_MODEL", "false")
+    app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit"))
+    app.start()
+    try:
+        assert "openai-compatible" in app.runtimes.names()
+        assert [m.model_id for m in app.models.all()] == ["local-model"]
+    finally:
+        app.stop()
