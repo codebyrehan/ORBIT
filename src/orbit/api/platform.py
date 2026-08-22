@@ -1,31 +1,23 @@
 """Persistent product-plane APIs: projects, knowledge, agents, tools and media."""
 from __future__ import annotations
-import hashlib, json, re, sqlite3, time
+import hashlib, json, sqlite3, time
 from pathlib import Path
 from typing import Any
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from orbit.api.runtime_control import RuntimeExecutor
 from orbit.core.capabilities import CapabilitySet
+from orbit.core.embeddings import cosine_similarity, embed
+from orbit.core.rag import RAGService
 from orbit.core.router import RouteRequest
 from orbit.core.runtime import GenerationRequest
-router = APIRouter(prefix="/v1", tags=["product"])
-def _db(request: Request):
-    context=request.app.state.orbit_context; path=Path(context.app.config.data_dir)/"platform.db"; path.parent.mkdir(parents=True,exist_ok=True)
-    db=sqlite3.connect(path); db.row_factory=sqlite3.Row
-    db.executescript("""CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL,created_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,title TEXT NOT NULL,created_at REAL NOT NULL,updated_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,conversation_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,name TEXT NOT NULL,content TEXT NOT NULL,sha256 TEXT NOT NULL,created_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS document_chunks(id TEXT PRIMARY KEY,document_id TEXT NOT NULL,project_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,content TEXT NOT NULL,created_at REAL NOT NULL);CREATE INDEX IF NOT EXISTS idx_document_chunks_project ON document_chunks(project_id);CREATE TABLE IF NOT EXISTS tools(name TEXT PRIMARY KEY,description TEXT NOT NULL,capability TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,capabilities TEXT NOT NULL,created_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY,kind TEXT NOT NULL,name TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,path TEXT NOT NULL,created_at REAL NOT NULL);""")
-    return db
-class ProjectIn(BaseModel): name:str=Field(min_length=1,max_length=120); description:str=Field(default="",max_length=1000)
-class ConversationIn(BaseModel): title:str=Field(default="New conversation",min_length=1,max_length=160)
-class ConversationPatch(BaseModel): title:str|None=Field(default=None,min_length=1,max_length=160)
-class MessageIn(BaseModel): role:str=Field(min_length=1,max_length=32); content:str=Field(min_length=1,max_length=100000)
-class KnowledgeIn(BaseModel): name:str=Field(min_length=1,max_length=240); content:str=Field(min_length=1,max_length=2_000_000)
-class AgentIn(BaseModel): name:str=Field(min_length=1,max_length=120); model:str=Field(min_length=1,max_length=200); capabilities:list[str]=Field(default_factory=list)
-class ToolIn(BaseModel): name:str=Field(min_length=1,max_length=80); description:str=Field(default="",max_length=500); capability:str=Field(default="tool:read",max_length=100)
-class ToolRunIn(BaseModel): arguments:dict[str,Any]=Field(default_factory=dict); capabilities:list[str]=Field(default_factory=list)
-def _row(row): return dict(row) if row else None
+router=APIRouter(prefix="/v1",tags=["product"])
+def _db(request:Request):
+    context=request.app.state.orbit_context;path=Path(context.app.config.data_dir)/"platform.db";path.parent.mkdir(parents=True,exist_ok=True);db=sqlite3.connect(path);db.row_factory=sqlite3.Row
+    db.executescript("""CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL,created_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,title TEXT NOT NULL,created_at REAL NOT NULL,updated_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,conversation_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,name TEXT NOT NULL,content TEXT NOT NULL,sha256 TEXT NOT NULL,created_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS document_chunks(id TEXT PRIMARY KEY,document_id TEXT NOT NULL,project_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,content TEXT NOT NULL,created_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS chunk_embeddings(chunk_id TEXT PRIMARY KEY,embedding TEXT NOT NULL,dimensions INTEGER NOT NULL,created_at REAL NOT NULL);CREATE INDEX IF NOT EXISTS idx_document_chunks_project ON document_chunks(project_id);CREATE TABLE IF NOT EXISTS tools(name TEXT PRIMARY KEY,description TEXT NOT NULL,capability TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,capabilities TEXT NOT NULL,created_at REAL NOT NULL);CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY,kind TEXT NOT NULL,name TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,path TEXT NOT NULL,created_at REAL NOT NULL);""");return db
+def _row(row):return dict(row) if row else None
 def _chunks(text,size=900,overlap=120):
-    text="\n".join(x.rstrip() for x in text.replace("\r\n","\n").splitlines()).strip(); result=[]; start=0
+    text="\n".join(x.rstrip() for x in text.replace("\r\n","\n").splitlines()).strip();result=[];start=0
     while text and start<len(text):
         end=min(len(text),start+size)
         if end<len(text):
@@ -36,15 +28,26 @@ def _chunks(text,size=900,overlap=120):
         if end>=len(text):break
         start=max(start+1,end-overlap)
     return result
-def _score(query,content):
-    q=set(re.findall(r"[\w'-]+",query.lower())); c=re.findall(r"[\w'-]+",content.lower())
-    if not q or not c:return 0.0
-    overlap=len(q & set(c))/len(q); tf=sum(min(c.count(t),3) for t in q)/len(c)
-    return overlap*0.9+min(tf*4,0.1)
+def _index_chunk(db,cid,content):
+    vector=embed(content);db.execute("INSERT OR REPLACE INTO chunk_embeddings VALUES(?,?,?,?)",(cid,json.dumps(vector,separators=(",",":")),len(vector),time.time()))
+def _semantic_hits(db,project_id,q,limit):
+    query=embed(q);hits=[]
+    for r in db.execute("SELECT c.id,c.document_id,c.chunk_index,c.content,d.name,d.sha256,e.embedding FROM document_chunks c JOIN documents d ON d.id=c.document_id LEFT JOIN chunk_embeddings e ON e.chunk_id=c.id WHERE c.project_id=?",(project_id,)):
+        vector=json.loads(r["embedding"]) if r["embedding"] else embed(r["content"]);score=cosine_similarity(query,vector);hits.append((score,dict(r)))
+    hits.sort(key=lambda x:x[0],reverse=True);return hits[:max(1,min(limit,20))]
+class ProjectIn(BaseModel): name:str=Field(min_length=1,max_length=120);description:str=Field(default="",max_length=1000)
+class ConversationIn(BaseModel): title:str=Field(default="New conversation",min_length=1,max_length=160)
+class ConversationPatch(BaseModel): title:str|None=Field(default=None,min_length=1,max_length=160)
+class MessageIn(BaseModel): role:str=Field(min_length=1,max_length=32);content:str=Field(min_length=1,max_length=100000)
+class KnowledgeIn(BaseModel): name:str=Field(min_length=1,max_length=240);content:str=Field(min_length=1,max_length=2_000_000)
+class ChatIn(BaseModel): content:str=Field(min_length=1,max_length=100000);model:str|None=None;rag:bool=True;rag_limit:int=Field(default=5,ge=1,le=10)
+class AgentIn(BaseModel): name:str=Field(min_length=1,max_length=120);model:str=Field(min_length=1,max_length=200);capabilities:list[str]=Field(default_factory=list)
+class ToolIn(BaseModel): name:str=Field(min_length=1,max_length=80);description:str=Field(default="",max_length=500);capability:str=Field(default="tool:read",max_length=100)
+class ToolRunIn(BaseModel): arguments:dict[str,Any]=Field(default_factory=dict);capabilities:list[str]=Field(default_factory=list)
 @router.get("/platform")
 async def platform(request):
     db=_db(request)
-    try:return {"version":"0.5.0","modules":{"remote_runtime":True,"models":True,"projects":True,"knowledge":True,"agents":True,"tools":True,"mcp":True,"voice":True,"vision":True,"security":True,"packaging":True}}
+    try:return {"version":"0.7.0","modules":{"remote_runtime":True,"models":True,"projects":True,"knowledge":True,"semantic_retrieval":True,"rag_chat":True,"agents":True,"tools":True,"mcp":True,"voice":True,"vision":True,"security":True,"packaging":True}}
     finally:db.close()
 @router.get("/projects")
 async def projects(request):
@@ -53,7 +56,7 @@ async def projects(request):
     finally:db.close()
 @router.post("/projects")
 async def create_project(payload:ProjectIn,request):
-    db=_db(request); pid=hashlib.sha256(f"{payload.name}:{time.time_ns()}".encode()).hexdigest()[:16]
+    db=_db(request);pid=hashlib.sha256(f"{payload.name}:{time.time_ns()}".encode()).hexdigest()[:16]
     try:db.execute("INSERT INTO projects VALUES(?,?,?,?)",(pid,payload.name,payload.description,time.time()));db.commit();return {"id":pid,"name":payload.name,"description":payload.description}
     finally:db.close()
 @router.get("/projects/{project_id}")
@@ -62,9 +65,7 @@ async def project(project_id,request):
     try:
         row=_row(db.execute("SELECT * FROM projects WHERE id=?",(project_id,)).fetchone())
         if not row:raise HTTPException(404,"project not found")
-        row["conversations"]=[dict(r) for r in db.execute("SELECT * FROM conversations WHERE project_id=? ORDER BY updated_at DESC",(project_id,))]
-        row["documents"]=[dict(r) for r in db.execute("SELECT id,name,sha256,created_at,(SELECT COUNT(*) FROM document_chunks c WHERE c.document_id=documents.id) AS chunks FROM documents WHERE project_id=? ORDER BY created_at DESC",(project_id,))]
-        return row
+        row["conversations"]=[dict(r) for r in db.execute("SELECT * FROM conversations WHERE project_id=? ORDER BY updated_at DESC",(project_id,))];row["documents"]=[dict(r) for r in db.execute("SELECT id,name,sha256,created_at,(SELECT COUNT(*) FROM document_chunks c WHERE c.document_id=documents.id) AS chunks FROM documents WHERE project_id=? ORDER BY created_at DESC",(project_id,))];return row
     finally:db.close()
 @router.post("/projects/{project_id}/conversations")
 async def create_conversation(project_id,payload:ConversationIn,request):
@@ -77,8 +78,7 @@ async def create_conversation(project_id,payload:ConversationIn,request):
 async def conversations(request,project_id:str|None=None):
     db=_db(request)
     try:
-        rows=db.execute("SELECT * FROM conversations WHERE project_id=? ORDER BY updated_at DESC",(project_id,)) if project_id else db.execute("SELECT * FROM conversations ORDER BY updated_at DESC")
-        return {"object":"list","data":[dict(r) for r in rows]}
+        rows=db.execute("SELECT * FROM conversations WHERE project_id=? ORDER BY updated_at DESC",(project_id,)) if project_id else db.execute("SELECT * FROM conversations ORDER BY updated_at DESC");return {"object":"list","data":[dict(r) for r in rows]}
     finally:db.close()
 @router.get("/conversations/{conversation_id}")
 async def conversation(conversation_id,request):
@@ -117,8 +117,8 @@ async def add_knowledge(project_id,payload:KnowledgeIn,request):
         if not db.execute("SELECT 1 FROM projects WHERE id=?",(project_id,)).fetchone():raise HTTPException(404,"project not found")
         digest=hashlib.sha256(payload.content.encode()).hexdigest();did=hashlib.sha256(f"{project_id}:{digest}".encode()).hexdigest()[:20];chunks=_chunks(payload.content)
         db.execute("INSERT OR REPLACE INTO documents VALUES(?,?,?,?,?,?)",(did,project_id,payload.name,payload.content,digest,time.time()));db.execute("DELETE FROM document_chunks WHERE document_id=?",(did,))
-        for i,chunk in enumerate(chunks):db.execute("INSERT INTO document_chunks VALUES(?,?,?,?,?,?)",(hashlib.sha256(f"{did}:{i}:{chunk}".encode()).hexdigest()[:24],did,project_id,i,chunk,time.time()))
-        db.commit();return {"id":did,"name":payload.name,"sha256":digest,"indexed":True,"chunks":len(chunks)}
+        for i,chunk in enumerate(chunks):cid=hashlib.sha256(f"{did}:{i}:{chunk}".encode()).hexdigest()[:24];db.execute("INSERT INTO document_chunks VALUES(?,?,?,?,?,?)",(cid,did,project_id,i,chunk,time.time()));_index_chunk(db,cid,chunk)
+        db.commit();return {"id":did,"name":payload.name,"sha256":digest,"indexed":True,"chunks":len(chunks),"embedding_dimensions":384}
     finally:db.close()
 @router.post("/projects/{project_id}/knowledge/search")
 async def search_knowledge(project_id,request,q:str,limit:int=5):
@@ -126,12 +126,21 @@ async def search_knowledge(project_id,request,q:str,limit:int=5):
     db=_db(request)
     try:
         if not db.execute("SELECT 1 FROM projects WHERE id=?",(project_id,)).fetchone():raise HTTPException(404,"project not found")
-        hits=[]
-        for r in db.execute("SELECT c.id,c.document_id,c.chunk_index,c.content,d.name,d.sha256 FROM document_chunks c JOIN documents d ON d.id=c.document_id WHERE c.project_id=?",(project_id,)):
-            score=_score(q,r["content"])
-            if score>0:hits.append((score,dict(r)))
-        hits.sort(key=lambda x:x[0],reverse=True);return {"query":q,"data":[{"id":x[1]["id"],"document_id":x[1]["document_id"],"name":x[1]["name"],"chunk_index":x[1]["chunk_index"],"score":round(x[0],6),"snippet":x[1]["content"][:1200],"sha256":x[1]["sha256"]} for x in hits[:max(1,min(limit,20))]]}
+        hits=_semantic_hits(db,project_id,q,limit);return {"query":q,"retrieval":"semantic","data":[{"id":x[1]["id"],"document_id":x[1]["document_id"],"name":x[1]["name"],"chunk_index":x[1]["chunk_index"],"score":round(x[0],6),"snippet":x[1]["content"][:1200],"sha256":x[1]["sha256"]} for x in hits]}
     finally:db.close()
+@router.post("/projects/{project_id}/chat")
+async def project_chat(project_id,payload:ChatIn,request):
+    db=_db(request)
+    try:
+        if not db.execute("SELECT 1 FROM projects WHERE id=?",(project_id,)).fetchone():raise HTTPException(404,"project not found")
+        hits=_semantic_hits(db,project_id,payload.content,payload.rag_limit) if payload.rag else []
+        context="\n\n".join(f"[Source: {x[1]['name']}#{x[1]['chunk_index']}]\n{x[1]['content']}" for x in hits)
+        prompt=(f"Use the following project sources when relevant. Cite sources by name.\n\n{context}\n\nUser: {payload.content}" if context else payload.content)
+    finally:db.close()
+    app=request.app.state.orbit_context.app
+    model_id=payload.model or getattr(app.config,"default_model",None)
+    if not model_id:raise HTTPException(503,"no model configured; set ORBIT_OPENAI_MODEL or configure a model")
+    decision=await app.router.route(RouteRequest(model_id));result=await RuntimeExecutor(decision.plan.runtime).execute(GenerationRequest(prompt=prompt,model=decision.model_id),request_id=getattr(request.state,"request_id",None));return {"project_id":project_id,"request_id":result.request_id,"model":decision.model_id,"runtime":decision.runtime_name,"output":result.text,"duration_ms":result.duration_ms,"sources":[{"name":x[1]["name"],"chunk_index":x[1]["chunk_index"],"score":round(x[0],6),"sha256":x[1]["sha256"]} for x in hits]}
 @router.get("/tools")
 async def tools(request):
     db=_db(request)
@@ -178,9 +187,7 @@ async def run_agent(agent_id,payload:MessageIn,request):
         model_id=row["model"]
     finally:db.close()
     app=request.app.state.orbit_context.app
-    if app.router is None:raise HTTPException(503,"inference router unavailable")
-    decision=await app.router.route(RouteRequest(model_id));result=await RuntimeExecutor(decision.plan.runtime).execute(GenerationRequest(prompt=payload.content,model=decision.model_id),request_id=getattr(request.state,"request_id",None))
-    return {"agent_id":agent_id,"request_id":result.request_id,"model":decision.model_id,"runtime":decision.runtime_name,"output":result.text,"duration_ms":result.duration_ms}
+    decision=await app.router.route(RouteRequest(model_id));result=await RuntimeExecutor(decision.plan.runtime).execute(GenerationRequest(prompt=payload.content,model=decision.model_id),request_id=getattr(request.state,"request_id",None));return {"agent_id":agent_id,"request_id":result.request_id,"model":decision.model_id,"runtime":decision.runtime_name,"output":result.text,"duration_ms":result.duration_ms}
 @router.post("/mcp/tools/{name}")
 async def mcp_tool(name,payload:ToolRunIn,request):return await run_tool(name,payload,request)
 @router.post("/media")
