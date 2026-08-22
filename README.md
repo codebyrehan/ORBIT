@@ -6,9 +6,71 @@ ORBIT is an open-source platform for running, managing, and orchestrating AI on 
 
 ## Project status
 
-🚧 **Early development — Phase 0**
+🚧 **Early development — production control plane + remote runtime adapter**
 
-The project is being built as an independent architecture, with an emphasis on local-first operation, hardware awareness, privacy, modular runtimes, and a simple user experience.
+The control plane, model lifecycle, routing, observability, security, recovery, browser dashboard, and production release gates are implemented. ORBIT can now also connect to any OpenAI-compatible remote inference service without changing the core API.
+
+## Current foundation
+
+- Hardware discovery and normalized resource profiling
+- Durable local model catalog
+- Verified local model artifact lifecycle
+- Compatibility scoring and resource placement
+- Runtime adapter contract with llama.cpp and generic OpenAI-compatible remote adapters
+- Local state/configuration primitives
+- Unified HTTP control-plane API
+- OpenAI-compatible model and chat endpoint shapes
+- Deterministic runtime routing with health/resource checks
+- Routed streaming chat completions using Server-Sent Events
+- Optional constant-time bearer API-key authentication for `/v1/*`
+- Configurable process-local token-bucket rate limiting for `/v1/*`
+- Durable privacy-conscious JSONL request audit trail
+- Audit events queryable through `GET /v1/audit/events`
+- Health/readiness probes excluded from authentication and rate limiting
+- Capability-based permissions
+- Plugin manifest and registry contracts
+- Python 3.11–3.13 CI, linting, type checking, and tests
+
+## Remote AI runtime
+
+ORBIT can use a remote service that implements the OpenAI-compatible API contract. Configure:
+
+```bash
+export ORBIT_OPENAI_API_KEY="your-provider-key"
+export ORBIT_OPENAI_BASE_URL="https://api.openai.com/v1"
+export ORBIT_OPENAI_MODEL="your-model-id"
+export ORBIT_OPENAI_RUNTIME_NAME="openai-compatible"
+```
+
+When these variables are present and no model is already registered, ORBIT automatically registers the configured remote model and routes inference through the adapter. The adapter uses `/models` for health checks and `/chat/completions` for generation. API keys are read only from process environment and are never written to the audit log.
+
+This same adapter works with OpenAI-compatible self-hosted gateways and providers; only `ORBIT_OPENAI_BASE_URL` and credentials need to change.
+
+## Control-plane security and auditability
+
+ORBIT can protect its versioned control-plane endpoints with a local API key. Set `OrbitConfig.api_key` to enable authentication. Clients must then send `Authorization: Bearer <api-key>` for `/v1/*` requests. Health and readiness endpoints remain unauthenticated so local process supervisors can probe the service.
+
+The control plane also supports `rate_limit_per_minute` and `rate_limit_burst`. The limiter is an in-process token bucket keyed by the authenticated identity, or by client address when authentication is disabled. A distributed deployment should enforce distributed limits at its reverse proxy or service boundary.
+
+Every request is recorded in the local append-only `audit.jsonl` file with timestamp, request ID, method, path, status, duration, and authentication state. Request bodies, authorization headers, API keys, and client addresses are intentionally excluded. Recent events can be inspected through `GET /v1/audit/events?limit=100`.
+
+## Model lifecycle
+
+The model lifecycle is now a complete local control-plane flow:
+
+1. Register runtime-neutral model metadata with `POST /v1/models`.
+2. Install a local artifact with `POST /v1/models/{id}/install`.
+3. Verify file size and optional SHA-256 before activation.
+4. Atomically move the verified artifact into ORBIT-managed storage.
+5. Restore lifecycle state from durable metadata after restart.
+6. Inspect lifecycle state with `GET /v1/models/{id}` or `GET /v1/models`.
+7. Remove stopped models with `DELETE /v1/models/{id}`.
+
+## Inference routing and streaming
+
+Chat requests are resolved through the model catalog, resource scheduler, and runtime health checks before execution. Callers may leave runtime selection automatic or request a specific runtime.
+
+`POST /v1/chat/completions` supports both buffered and streaming responses. With `"stream": true`, ORBIT returns Server-Sent Events containing OpenAI-compatible chat-completion chunks and terminates with `data: [DONE]`. Runtime failures are surfaced as structured streaming error events and recorded by the API metrics layer.
 
 ## Principles
 
@@ -21,22 +83,20 @@ The project is being built as an independent architecture, with an emphasis on l
 
 ## Planned capabilities
 
-- Hardware discovery and resource profiling
-- Local model lifecycle and model catalog
-- Runtime adapters for local inference engines
-- Unified OpenAI-compatible API
+- Remote model registries and resumable downloads
 - Native chat and projects
 - Knowledge and retrieval
 - Agents, tools, MCP, and memory
 - Voice, vision, and image capabilities
 - Automation and background tasks
-- Plugin SDK
+- Plugin SDK and isolated tool execution
 - Control Center and system observability
+- Cross-platform packaging and one-command setup
 
 ## License
 
-ORBIT is intended to be released under the Apache License 2.0.
+ORBIT is released under the Apache License 2.0.
 
 ## Development
 
-The initial implementation is Python-based. The repository is intentionally starting small so the core contracts can be established before adding heavyweight runtimes or UI dependencies.
+The initial implementation is Python-based. The repository is intentionally starting with small, testable contracts so heavyweight runtimes and UI layers can be integrated without turning infrastructure details into the product architecture.

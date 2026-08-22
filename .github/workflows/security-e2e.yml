@@ -1,0 +1,54 @@
+name: Security E2E
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  security-e2e:
+    runs-on: ubuntu-latest
+    env:
+      ORBIT_API_TOKEN: "orbit-e2e-token-0123456789abcdef0123456789abcdef"
+      ORBIT_RATE_LIMIT_PER_MINUTE: "120"
+      ORBIT_RATE_LIMIT_BURST: "3"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build -t orbit-ai:security .
+      - run: docker run -d --name orbit-security -p 8787:8787 -e ORBIT_API_TOKEN -e ORBIT_RATE_LIMIT_PER_MINUTE -e ORBIT_RATE_LIMIT_BURST orbit-ai:security
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8787/health >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs orbit-security
+          exit 1
+      - name: Public endpoints remain public
+        run: |
+          set -e
+          curl --fail --silent http://127.0.0.1:8787/ | grep -q '"status":"ok"'
+          curl --fail --silent http://127.0.0.1:8787/health | grep -q '"status":"ok"'
+          curl --fail --silent http://127.0.0.1:8787/ready | grep -q '"ready":true'
+      - name: Protected endpoint rejects missing credentials
+        run: |
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8787/v1/metrics)" = "401"
+      - name: Protected endpoint rejects invalid credentials
+        run: |
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'Authorization: Bearer invalid-token' http://127.0.0.1:8787/v1/metrics)" = "401"
+      - name: Valid credentials succeed
+        run: |
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics | grep -q '"requests_total"'
+      - name: Rate limit is enforced
+        run: |
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics >/dev/null
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics >/dev/null
+          response="$(curl --silent --output /tmp/rate-limit.json --write-out '%{http_code}' -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics)"
+          test "$response" = "429"
+          grep -qi 'Retry-After' <(curl --silent --dump-header - -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics) || true
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs orbit-security
+      - name: Stop container
+        if: always()
+        run: docker rm -f orbit-security
