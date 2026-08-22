@@ -28,4 +28,8 @@ def require_bearer(authorization: str, expected: str) -> None:
 
 
 def confined_path(root: Path, candidate: str | Path) -> Path:
-    return safe_child_path(root, Path(candidate))
+    """Resolve candidate paths relative to the configured storage root."""
+    candidate_path = Path(candidate)
+    if not candidate_path.is_absolute():
+        candidate_path = root / candidate_path
+    return safe_child_path(root, candidate_path)
