@@ -6,7 +6,7 @@ ORBIT is an open-source platform for running, managing, and orchestrating AI on 
 
 ## Project status
 
-🚧 **Early development — model lifecycle phase complete**
+🚧 **Early development — streaming inference phase complete**
 
 The project is being built as an independent architecture, with an emphasis on local-first operation, hardware awareness, privacy, modular runtimes, and a simple user experience.
 
@@ -19,6 +19,8 @@ The project is being built as an independent architecture, with an emphasis on l
 - Local state/configuration primitives
 - Unified HTTP control-plane API
 - OpenAI-compatible model and chat endpoint shapes
+- Deterministic runtime routing with health/resource checks
+- Routed streaming chat completions using Server-Sent Events
 - Capability-based permissions
 - Plugin manifest and registry contracts
 - Python 3.11–3.13 CI, linting, type checking, and tests
@@ -36,6 +38,12 @@ The model lifecycle is now a complete local control-plane flow:
 7. Remove stopped models with `DELETE /v1/models/{id}`.
 
 Model installation is deliberately local-only at this stage. Remote registries and download adapters remain separate future capabilities.
+
+## Inference routing and streaming
+
+Chat requests are resolved through the model catalog, resource scheduler, and runtime health checks before execution. Callers may leave runtime selection automatic or request a specific runtime.
+
+`POST /v1/chat/completions` supports both buffered and streaming responses. With `"stream": true`, ORBIT returns Server-Sent Events containing OpenAI-compatible chat-completion chunks and terminates with `data: [DONE]`. Runtime failures are surfaced as structured streaming error events and recorded by the API metrics layer.
 
 ## Principles
 
