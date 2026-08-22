@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from orbit.core.app import OrbitApp
@@ -30,17 +30,24 @@ class ApiContext:
     app: OrbitApp
 
 
-def create_app(app: OrbitApp | None = None) -> FastAPI:
-    """Create an API instance with an isolated ORBIT application context."""
-    orbit = app or OrbitApp(OrbitConfig.default())
-    if orbit.state.value not in {"ready", "starting"}:
-        orbit.start()
+def _context(request: Request) -> ApiContext:
+    context = request.app.state.orbit_context
+    if not isinstance(context, ApiContext):
+        raise RuntimeError("ORBIT API context is unavailable")
+    if context.app.state.value not in {"ready", "starting"}:
+        context.app.start()
+    return context
 
+
+def create_app(app: OrbitApp | None = None) -> FastAPI:
+    """Create an API instance without performing filesystem work at import time."""
+    orbit = app or OrbitApp(OrbitConfig.default())
     api = FastAPI(title="ORBIT API", version="0.1.0-dev", docs_url="/docs")
-    context = ApiContext(orbit)
+    api.state.orbit_context = ApiContext(orbit)
 
     @api.get("/health")
-    async def health() -> dict[str, Any]:
+    async def health(request: Request) -> dict[str, Any]:
+        context = _context(request)
         hardware = context.app.hardware
         return {
             "status": "ok",
@@ -49,7 +56,8 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         }
 
     @api.get("/v1/models")
-    async def models() -> dict[str, Any]:
+    async def models(request: Request) -> dict[str, Any]:
+        context = _context(request)
         data = [
             {
                 "id": model.model_id,
@@ -62,7 +70,8 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         return {"object": "list", "data": data}
 
     @api.get("/v1/system")
-    async def system() -> dict[str, Any]:
+    async def system(request: Request) -> dict[str, Any]:
+        context = _context(request)
         hardware = context.app.hardware
         if hardware is None:
             raise HTTPException(status_code=503, detail="ORBIT is not initialized")
@@ -81,7 +90,10 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         }
 
     @api.post("/v1/chat/completions")
-    async def chat_completion(request: ChatCompletionRequest) -> dict[str, Any]:
+    async def chat_completion(
+        request: ChatCompletionRequest, http_request: Request
+    ) -> dict[str, Any]:
+        context = _context(http_request)
         runtime = context.app.runtimes.get("llama.cpp") or context.app.runtimes.active
         if runtime is None:
             raise HTTPException(status_code=503, detail="no inference runtime is registered")
