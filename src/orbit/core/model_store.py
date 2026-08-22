@@ -20,11 +20,11 @@ class ModelStore:
             return ModelCatalog()
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(raw, list):
-            raise ValueError("model catalog must contain a JSON array")
+            raise TypeError("model catalog must contain a JSON array")
         catalog = ModelCatalog()
         for item in raw:
             if not isinstance(item, dict):
-                raise ValueError("each model catalog entry must be an object")
+                raise TypeError("each model catalog entry must be an object")
             catalog.register(self._from_dict(item))
         return catalog
 
@@ -59,7 +59,9 @@ class ModelStore:
             display_name=str(item["display_name"]),
             modality=ModelModality(str(item.get("modality", "text"))),
             size_bytes=item.get("size_bytes") if isinstance(item.get("size_bytes"), int) else None,
-            min_memory_bytes=item.get("min_memory_bytes") if isinstance(item.get("min_memory_bytes"), int) else None,
+            min_memory_bytes=item.get("min_memory_bytes")
+            if isinstance(item.get("min_memory_bytes"), int)
+            else None,
             capabilities=frozenset(item.get("capabilities", [])),
             runtimes=frozenset(item.get("runtimes", [])),
             tags=frozenset(item.get("tags", [])),
