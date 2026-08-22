@@ -9,7 +9,7 @@ from orbit.core.models import ModelSpec
 
 
 def test_model_detail_and_verification_endpoint(tmp_path: Path) -> None:
-    app = OrbitApp(OrbitConfig.default(data_dir=tmp_path))
+    app = OrbitApp(OrbitConfig.default(home=tmp_path))
     client = TestClient(create_app(app))
     app.start()
     assert app.model_manager is not None
@@ -27,7 +27,7 @@ def test_model_detail_and_verification_endpoint(tmp_path: Path) -> None:
 
 
 def test_model_verification_rejects_missing_artifact(tmp_path: Path) -> None:
-    app = OrbitApp(OrbitConfig.default(data_dir=tmp_path))
+    app = OrbitApp(OrbitConfig.default(home=tmp_path))
     client = TestClient(create_app(app))
     app.start()
     assert app.model_manager is not None
