@@ -33,6 +33,31 @@ class RuntimeMetrics:
             "error_rate": self.requests_failed / requests if requests else 0.0,
         }
 
+    def prometheus(self) -> str:
+        """Render metrics in dependency-free Prometheus text format."""
+        snapshot = self.snapshot()
+        lines = [
+            "# HELP orbit_requests_total Total completed inference requests.",
+            "# TYPE orbit_requests_total counter",
+            f"orbit_requests_total {snapshot['requests_total']}",
+            "# HELP orbit_requests_failed_total Total failed inference requests.",
+            "# TYPE orbit_requests_failed_total counter",
+            f"orbit_requests_failed_total {snapshot['requests_failed']}",
+            "# HELP orbit_tokens_total Total generated tokens recorded by ORBIT.",
+            "# TYPE orbit_tokens_total counter",
+            f"orbit_tokens_total {snapshot['tokens_total']}",
+            "# HELP orbit_latency_ms_total Total inference latency in milliseconds.",
+            "# TYPE orbit_latency_ms_total counter",
+            f"orbit_latency_ms_total {snapshot['latency_ms_total']}",
+            "# HELP orbit_latency_ms_avg Average recorded inference latency in milliseconds.",
+            "# TYPE orbit_latency_ms_avg gauge",
+            f"orbit_latency_ms_avg {snapshot['latency_ms_avg']}",
+            "# HELP orbit_error_rate Fraction of recorded requests that failed.",
+            "# TYPE orbit_error_rate gauge",
+            f"orbit_error_rate {snapshot['error_rate']}",
+        ]
+        return "\n".join(lines) + "\n"
+
 
 class JsonFormatter(logging.Formatter):
     """Render logs as stable JSON objects for local and production collectors."""
