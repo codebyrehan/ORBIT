@@ -6,7 +6,7 @@ ORBIT is an open-source platform for running, managing, and orchestrating AI on 
 
 ## Project status
 
-🚧 **Early development — runtime/API foundation in progress**
+🚧 **Early development — model lifecycle phase complete**
 
 The project is being built as an independent architecture, with an emphasis on local-first operation, hardware awareness, privacy, modular runtimes, and a simple user experience.
 
@@ -23,6 +23,20 @@ The project is being built as an independent architecture, with an emphasis on l
 - Plugin manifest and registry contracts
 - Python 3.11–3.13 CI, linting, type checking, and tests
 
+## Model lifecycle
+
+The model lifecycle is now a complete local control-plane flow:
+
+1. Register runtime-neutral model metadata with `POST /v1/models`.
+2. Install a local artifact with `POST /v1/models/{id}/install`.
+3. Verify file size and optional SHA-256 before activation.
+4. Atomically move the verified artifact into ORBIT-managed storage.
+5. Restore lifecycle state from durable metadata after restart.
+6. Inspect lifecycle state with `GET /v1/models/{id}` or `GET /v1/models`.
+7. Remove stopped models with `DELETE /v1/models/{id}`.
+
+Model installation is deliberately local-only at this stage. Remote registries and download adapters remain separate future capabilities.
+
 ## Principles
 
 - **Local-first:** your hardware and data come first.
@@ -34,7 +48,7 @@ The project is being built as an independent architecture, with an emphasis on l
 
 ## Planned capabilities
 
-- Native model installation and lifecycle management
+- Remote model registries and resumable downloads
 - Automatic runtime selection and model placement
 - Native chat and projects
 - Knowledge and retrieval
