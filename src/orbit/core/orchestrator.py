@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from orbit.core.failover import RuntimeFailover
+from orbit.core.load_control import RuntimeLoadController
 from orbit.core.models import ModelSpec
 from orbit.core.runtime import GenerationRequest, RuntimeAdapter
 from orbit.core.runtime_manager import RuntimeManager
@@ -24,10 +25,11 @@ class ExecutionPlan:
 class InferenceOrchestrator:
     """Turn a model request into a validated, runtime-backed generation stream."""
 
-    def __init__(self, scheduler: ResourceScheduler, runtimes: RuntimeManager, failover: RuntimeFailover | None = None) -> None:
+    def __init__(self, scheduler: ResourceScheduler, runtimes: RuntimeManager, failover: RuntimeFailover | None = None, load_control: RuntimeLoadController | None = None) -> None:
         self.scheduler = scheduler
         self.runtimes = runtimes
         self.failover = failover or RuntimeFailover(runtimes)
+        self.load_control = load_control or RuntimeLoadController()
 
     async def plan(self, model: ModelSpec, runtime_name: str | None = None) -> ExecutionPlan:
         candidates: tuple[str, ...]
@@ -46,6 +48,9 @@ class InferenceOrchestrator:
             placement = self.scheduler.place(model, name)
             if placement is None:
                 continue
+            status = self.runtimes.health_status(name)
+            if status is not None and not status.healthy:
+                continue
             if not await adapter.health():
                 continue
             plans.append(ExecutionPlan(model=model, runtime=adapter, placement=placement))
@@ -53,7 +58,11 @@ class InferenceOrchestrator:
         if not plans:
             raise RuntimeError(f"no healthy compatible runtime available for model: {model.model_id}")
 
-        selected = max(plans, key=lambda plan: (plan.placement.score, plan.runtime.info.name))
+        scored: list[tuple[ExecutionPlan, int]] = []
+        for plan in plans:
+            snapshot = await self.load_control.snapshot(plan.runtime.info.name)
+            scored.append((plan, snapshot.available))
+        selected = max(scored, key=lambda item: (item[0].placement.score, item[1], item[0].runtime.info.name))[0]
         self.runtimes.select(selected.runtime.info.name)
         return selected
 
@@ -65,6 +74,7 @@ class InferenceOrchestrator:
         runtime_name: str | None = None,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        capacity_timeout: float | None = None,
     ) -> AsyncIterator[str]:
         plan = await self.plan(model, runtime_name)
         request = GenerationRequest(prompt=prompt, model=model.model_id, temperature=temperature, max_tokens=max_tokens)
@@ -73,7 +83,10 @@ class InferenceOrchestrator:
 
         while True:
             emitted = False
+            acquired = False
             try:
+                await self.load_control.acquire(plan.runtime.info.name, timeout=capacity_timeout)
+                acquired = True
                 async for token in plan.runtime.generate(request):
                     emitted = True
                     yield token
@@ -86,3 +99,6 @@ class InferenceOrchestrator:
                     raise
                 attempted.add(decision.runtime_name)
                 plan = await self.plan(model, decision.runtime_name)
+            finally:
+                if acquired:
+                    await self.load_control.release(plan.runtime.info.name)
