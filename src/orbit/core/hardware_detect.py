@@ -10,7 +10,6 @@ import os
 import platform
 import shutil
 import subprocess
-from pathlib import Path
 
 from orbit.core.hardware import Accelerator, AcceleratorVendor, HardwareProfile
 
@@ -51,9 +50,7 @@ def _nvidia_accelerators() -> tuple[Accelerator, ...]:
         except ValueError:
             memory_bytes = None
         if name:
-            accelerators.append(
-                Accelerator(AcceleratorVendor.NVIDIA, name, memory_bytes)
-            )
+            accelerators.append(Accelerator(AcceleratorVendor.NVIDIA, name, memory_bytes))
     return tuple(accelerators)
 
 
