@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from orbit.api import create_app
+from orbit.api.server import create_app
 from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
 from orbit.core.models import ModelSpec
