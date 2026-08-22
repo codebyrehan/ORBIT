@@ -1,0 +1,43 @@
+name: Product Plane Gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  product-plane:
+    runs-on: ubuntu-latest
+    env:
+      ORBIT_API_TOKEN: orbit-product-token-0123456789abcdef0123456789abcdef
+      ORBIT_ENABLE_DEMO_MODEL: "true"
+      ORBIT_DATA_DIR: /tmp/orbit-product
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check src/orbit/api/platform.py src/orbit/entrypoint.py src/orbit/multimodal.py tests/test_product_platform.py
+      - run: mypy src/orbit/api/platform.py src/orbit/entrypoint.py src/orbit/multimodal.py
+      - run: pytest tests/test_product_platform.py
+      - name: Build and run product entrypoint
+        run: |
+          python -m uvicorn orbit.entrypoint:app --host 127.0.0.1 --port 8787 >/tmp/orbit.log 2>&1 &
+          echo $! >/tmp/orbit.pid
+          for i in $(seq 1 30); do curl --fail --silent http://127.0.0.1:8787/ready && break || sleep 1; done
+          curl --fail --silent http://127.0.0.1:8787/control | grep -q 'Control Center'
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/platform | grep -q 'knowledge'
+          project=$(curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" -H 'Content-Type: application/json' -d '{"name":"CI Project","description":"product gate"}' http://127.0.0.1:8787/v1/projects)
+          echo "$project" | grep -q 'CI Project'
+          pid=$(python -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$project")
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" -H 'Content-Type: application/json' -d '{"name":"notes","content":"ORBIT knowledge retrieval smoke"}' "http://127.0.0.1:8787/v1/projects/$pid/knowledge" | grep -q 'verified\|indexed'
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" "http://127.0.0.1:8787/v1/projects/$pid/knowledge/search?q=ORBIT" | grep -q 'retrieval'
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" -H 'Content-Type: application/json' -d '{"name":"echo","description":"safe echo","capability":"tool:echo"}' http://127.0.0.1:8787/v1/tools | grep -q 'echo'
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H "Authorization: Bearer $ORBIT_API_TOKEN" -H 'Content-Type: application/json' -d '{"arguments":{"text":"x"},"capabilities":[]}' http://127.0.0.1:8787/v1/tools/echo/run)" = "403"
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" -H 'Content-Type: application/json' -d '{"arguments":{"text":"x"},"capabilities":["tool:echo"]}' http://127.0.0.1:8787/v1/tools/echo/run | grep -q '"ok":true'
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" -F 'file=@README.md;type=text/plain' http://127.0.0.1:8787/v1/media | grep -q 'sha256'
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/packaging | grep -q 'orbit-ai'
+      - if: always()
+        run: |
+          cat /tmp/orbit.log || true
+          kill "$(cat /tmp/orbit.pid)" 2>/dev/null || true
