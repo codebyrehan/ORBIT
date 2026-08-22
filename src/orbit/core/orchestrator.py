@@ -28,6 +28,7 @@ class InferenceOrchestrator:
         self.runtimes = runtimes
 
     async def plan(self, model: ModelSpec, runtime_name: str | None = None) -> ExecutionPlan:
+        candidates: tuple[str, ...]
         if runtime_name:
             candidates = (runtime_name,)
         elif model.runtimes:
