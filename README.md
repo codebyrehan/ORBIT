@@ -6,7 +6,7 @@ ORBIT is an open-source platform for running, managing, and orchestrating AI on 
 
 ## Project status
 
-🚧 **Early development — streaming inference phase complete**
+🚧 **Early development — control-plane security phase complete**
 
 The project is being built as an independent architecture, with an emphasis on local-first operation, hardware awareness, privacy, modular runtimes, and a simple user experience.
 
@@ -21,9 +21,16 @@ The project is being built as an independent architecture, with an emphasis on l
 - OpenAI-compatible model and chat endpoint shapes
 - Deterministic runtime routing with health/resource checks
 - Routed streaming chat completions using Server-Sent Events
+- Optional constant-time bearer API-key authentication for `/v1/*`
 - Capability-based permissions
 - Plugin manifest and registry contracts
 - Python 3.11–3.13 CI, linting, type checking, and tests
+
+## Control-plane security
+
+ORBIT can protect its versioned control-plane endpoints with a local API key. Set `OrbitConfig.api_key` to enable authentication. Clients must then send `Authorization: Bearer <api-key>` for `/v1/*` requests. Health and readiness endpoints remain unauthenticated so local process supervisors can probe the service.
+
+Authentication uses constant-time token comparison and returns `401` with a `WWW-Authenticate: Bearer` challenge when credentials are absent or invalid. Authentication is intentionally opt-in so existing local development and health checks remain frictionless.
 
 ## Model lifecycle
 
