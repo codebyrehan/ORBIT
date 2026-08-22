@@ -103,7 +103,6 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
 
     @api.middleware("http")
     async def request_security(request: Request, call_next: Any) -> Any:
-        """Authenticate and rate-limit control-plane requests."""
         request.state.authenticated = orbit.config.api_key is None
         if request.url.path.startswith("/v1/"):
             if orbit.config.api_key is not None:
@@ -162,6 +161,32 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"object": "list", "data": events}
+
+    @api.get("/v1/requests")
+    async def requests(request: Request, limit: int = 100) -> dict[str, Any]:
+        context = _context(request)
+        try:
+            records = context.app.request_manager.recent(limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"object": "list", "data": [{"request_id": item.request_id, "model": item.model_id, "runtime": item.runtime_name, "state": item.state, "created_at": item.created_at, "completed_at": item.completed_at, "error": item.error, "tokens": item.tokens} for item in records]}
+
+    @api.get("/v1/requests/{request_id}")
+    async def request_detail(request_id: str, request: Request) -> dict[str, Any]:
+        context = _context(request)
+        record = context.app.request_manager.get(request_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"unknown request: {request_id}")
+        return {"request_id": record.request_id, "model": record.model_id, "runtime": record.runtime_name, "state": record.state, "created_at": record.created_at, "completed_at": record.completed_at, "error": record.error, "tokens": record.tokens}
+
+    @api.post("/v1/requests/{request_id}/cancel")
+    async def cancel_request(request_id: str, request: Request) -> dict[str, Any]:
+        context = _context(request)
+        try:
+            record = context.app.request_manager.cancel(request_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"request_id": record.request_id, "state": record.state}
 
     @api.get("/v1/models")
     async def models(request: Request) -> dict[str, Any]:
@@ -258,35 +283,42 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-
         generation = GenerationRequest(prompt=prompt, model=decision.model_id, temperature=request.temperature, max_tokens=request.max_tokens)
         executor = RuntimeExecutor(decision.plan.runtime)
-
         if not request.stream:
             try:
                 result = await executor.execute(generation)
             except RuntimeExecutionError as exc:
+                context.app.request_manager.fail(trace.request_id, str(exc))
                 metrics_for(http_request).record(latency_ms=trace.elapsed_ms, tokens=0, failed=True)
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
+            context.app.request_manager.start(result.request_id, decision.model_id, decision.runtime_name)
+            context.app.request_manager.complete(result.request_id, tokens=len(result.text.split()))
             metrics_for(http_request).record(latency_ms=result.duration_ms, tokens=len(result.text.split()))
             return {"id": result.request_id, "object": "chat.completion", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "message": {"role": "assistant", "content": result.text}, "finish_reason": "stop"}], "usage": {"completion_ms": round(result.duration_ms, 3)}}
 
+        request_id = http_request.state.request_id
+        context.app.request_manager.start(request_id, decision.model_id, decision.runtime_name)
+
         async def event_stream() -> AsyncIterator[bytes]:
-            request_id = http_request.state.request_id
             completion_id = f"chatcmpl-{request_id}"
             token_count = 0
-            started = trace
             try:
                 yield _sse({"id": completion_id, "object": "chat.completion.chunk", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]})
                 async for chunk in executor.stream(generation):
                     token_count += len(chunk.split())
                     yield _sse({"id": completion_id, "object": "chat.completion.chunk", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}]})
+                context.app.request_manager.complete(request_id, tokens=token_count)
+                metrics_for(http_request).record(latency_ms=trace.elapsed_ms, tokens=token_count)
                 yield _sse({"id": completion_id, "object": "chat.completion.chunk", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
-                metrics_for(http_request).record(latency_ms=started.elapsed_ms, tokens=token_count)
                 yield b"data: [DONE]\n\n"
-            except RuntimeExecutionError:
-                metrics_for(http_request).record(latency_ms=started.elapsed_ms, tokens=token_count, failed=True)
+            except RuntimeExecutionError as exc:
+                context.app.request_manager.fail(request_id, str(exc), tokens=token_count)
+                metrics_for(http_request).record(latency_ms=trace.elapsed_ms, tokens=token_count, failed=True)
                 yield _sse({"id": completion_id, "object": "error", "error": {"message": "generation failed", "type": "runtime_error"}})
+            except asyncio.CancelledError:
+                context.app.request_manager.cancel(request_id)
+                raise
 
         return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
