@@ -39,11 +39,17 @@ class ModelSpec:
             if value is not None and value < 0:
                 raise ValueError(f"{name} must be non-negative")
 
-    def with_local_path(self, path: str) -> "ModelSpec":
+    def with_local_path(self, path: str) -> ModelSpec:
         return ModelSpec(
-            model_id=self.model_id, display_name=self.display_name, modality=self.modality,
-            size_bytes=self.size_bytes, min_memory_bytes=self.min_memory_bytes,
-            capabilities=self.capabilities, runtimes=self.runtimes, tags=self.tags, local_path=path,
+            model_id=self.model_id,
+            display_name=self.display_name,
+            modality=self.modality,
+            size_bytes=self.size_bytes,
+            min_memory_bytes=self.min_memory_bytes,
+            capabilities=self.capabilities,
+            runtimes=self.runtimes,
+            tags=self.tags,
+            local_path=path,
         )
 
     def compatibility_score(self, hardware: HardwareProfile, runtime: str) -> float:
@@ -75,7 +81,9 @@ class ModelCatalog:
     def all(self) -> tuple[ModelSpec, ...]:
         return tuple(self._models.values())
 
-    def recommend(self, hardware: HardwareProfile, runtime: str, limit: int = 5) -> tuple[ModelSpec, ...]:
+    def recommend(
+        self, hardware: HardwareProfile, runtime: str, limit: int = 5
+    ) -> tuple[ModelSpec, ...]:
         if limit <= 0:
             return ()
         scored = [(model, model.compatibility_score(hardware, runtime)) for model in self._models.values()]
