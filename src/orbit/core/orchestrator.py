@@ -85,8 +85,9 @@ class InferenceOrchestrator:
             emitted = False
             acquired_runtime: str | None = None
             try:
-                acquired_runtime = plan.runtime.info.name
-                await self.load_control.acquire(acquired_runtime, timeout=capacity_timeout)
+                runtime_to_acquire = plan.runtime.info.name
+                await self.load_control.acquire(runtime_to_acquire, timeout=capacity_timeout)
+                acquired_runtime = runtime_to_acquire
                 async for token in plan.runtime.generate(request):
                     emitted = True
                     yield token
