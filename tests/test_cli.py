@@ -10,7 +10,11 @@ def test_parser_exposes_developer_commands() -> None:
 def test_models_command_supports_json(capsys, monkeypatch, tmp_path) -> None:
     from orbit.core import config as config_module
 
-    monkeypatch.setattr(config_module.OrbitConfig, "default", lambda: config_module.OrbitConfig(home=tmp_path))
+    monkeypatch.setattr(
+        config_module.OrbitConfig,
+        "default",
+        lambda: config_module.OrbitConfig(data_dir=tmp_path),
+    )
     assert main(["models", "--json"]) == 0
     assert capsys.readouterr().out.strip() == "[]"
 
@@ -18,6 +22,10 @@ def test_models_command_supports_json(capsys, monkeypatch, tmp_path) -> None:
 def test_health_command_returns_success(capsys, monkeypatch, tmp_path) -> None:
     from orbit.core import config as config_module
 
-    monkeypatch.setattr(config_module.OrbitConfig, "default", lambda: config_module.OrbitConfig(home=tmp_path))
+    monkeypatch.setattr(
+        config_module.OrbitConfig,
+        "default",
+        lambda: config_module.OrbitConfig(data_dir=tmp_path),
+    )
     assert main(["health"]) == 0
     assert "healthy" in capsys.readouterr().out
