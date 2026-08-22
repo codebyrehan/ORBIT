@@ -29,10 +29,13 @@ class FakeRuntime(RuntimeAdapter):
         return self._tokens(request)
 
 
+def test_hardware() -> HardwareProfile:
+    return HardwareProfile(platform="test", architecture="x86_64", memory_bytes=16 * 1024**3)
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_plans_healthy_compatible_runtime() -> None:
-    hardware = HardwareProfile.detected_for_test(memory_bytes=16 * 1024**3)
-    scheduler = ResourceScheduler(hardware)
+    scheduler = ResourceScheduler(test_hardware())
     runtimes = RuntimeManager()
     runtimes.register(FakeRuntime())
     orchestrator = InferenceOrchestrator(scheduler, runtimes)
@@ -48,10 +51,9 @@ async def test_orchestrator_plans_healthy_compatible_runtime() -> None:
 
 @pytest.mark.asyncio
 async def test_orchestrator_rejects_unhealthy_runtime() -> None:
-    hardware = HardwareProfile.detected_for_test(memory_bytes=16 * 1024**3)
     runtimes = RuntimeManager()
     runtimes.register(FakeRuntime(healthy=False))
-    orchestrator = InferenceOrchestrator(ResourceScheduler(hardware), runtimes)
+    orchestrator = InferenceOrchestrator(ResourceScheduler(test_hardware()), runtimes)
     model = ModelSpec("demo", "Demo", runtimes=frozenset({"fake"}))
 
     with pytest.raises(RuntimeError, match="no healthy compatible runtime"):
