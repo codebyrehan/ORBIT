@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 
 from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
@@ -31,12 +30,10 @@ def _new_app() -> OrbitApp:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-
     if args.command == "start":
         app = _new_app()
         print(f"ORBIT is ready ({app.state.value})")
         return 0
-
     if args.command == "status":
         app = _new_app()
         hardware = app.hardware
@@ -50,14 +47,11 @@ def main(argv: list[str] | None = None) -> int:
             accelerator_memory = f"{accelerator.memory_bytes / 1024**3:.1f} GiB" if accelerator.memory_bytes else "unknown"
             print(f"Accelerator: {accelerator.vendor.value} — {accelerator.name} ({accelerator_memory})")
         return 0
-
     if args.command == "health":
         app = _new_app()
-        checks = app.health.check()
-        for check in checks:
+        for check in app.health.check():
             print(f"{check.status.value:10} {check.name}: {check.detail}")
         return 0 if app.health.overall() is HealthStatus.HEALTHY else 1
-
     if args.command == "models":
         app = _new_app()
         data = [{"id": model.model_id, "modality": model.modality.value, "capabilities": sorted(model.capabilities)} for model in app.models.all()]
@@ -69,12 +63,10 @@ def main(argv: list[str] | None = None) -> int:
             for model in data:
                 print(f"{model['id']} [{model['modality']}] — {', '.join(model['capabilities']) or 'no capabilities'}")
         return 0
-
     if args.command == "serve":
         import uvicorn
         uvicorn.run("orbit.api.server:app", host="127.0.0.1", port=8787, reload=False)
         return 0
-
     build_parser().print_help()
     return 0
 
