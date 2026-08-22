@@ -22,8 +22,8 @@ class OrbitConfig:
 
     @classmethod
     def default(cls, home: Path | None = None) -> OrbitConfig:
-        base = home if home is not None else Path.home()
-        return cls(data_dir=base / ".orbit", api_key=resolve_api_token(None))
+        """Build the default runtime configuration, honoring environment overrides."""
+        return cls.from_env(home)
 
     @classmethod
     def from_env(cls, home: Path | None = None) -> OrbitConfig:
