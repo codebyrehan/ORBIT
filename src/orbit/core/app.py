@@ -8,6 +8,7 @@ from orbit.core.config import OrbitConfig
 from orbit.core.hardware import HardwareProfile
 from orbit.core.hardware_detect import detect_hardware
 from orbit.core.lifecycle import LifecycleState
+from orbit.core.model_manager import ModelManager
 from orbit.core.model_store import ModelStore
 from orbit.core.models import ModelCatalog
 from orbit.core.runtime_manager import RuntimeManager
@@ -25,6 +26,7 @@ class OrbitApp:
     runtimes: RuntimeManager = field(default_factory=RuntimeManager)
     scheduler: ResourceScheduler | None = None
     model_store: ModelStore | None = None
+    model_manager: ModelManager | None = None
 
     def start(self) -> None:
         self.state = LifecycleState.STARTING
@@ -33,6 +35,7 @@ class OrbitApp:
         self.scheduler = ResourceScheduler(self.hardware)
         self.model_store = ModelStore(self.config.data_dir / "models.json")
         self.models = self.model_store.load()
+        self.model_manager = ModelManager(self.model_store, self.config.data_dir / "models")
         self.state = LifecycleState.READY
 
     def save_models(self) -> None:
