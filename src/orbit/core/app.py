@@ -77,24 +77,42 @@ class OrbitApp:
         if remote_key and self.runtimes.get("openai-compatible") is None:
             self.runtimes.register(OpenAICompatibleRuntime.from_env())
 
-    def _ensure_configured_model(self) -> None:
-        if self.models.all():
-            return
+    def _configured_spec(self) -> ModelSpec | None:
         llama_model = os.getenv("ORBIT_LLAMA_CPP_MODEL", "").strip()
         if llama_model and self.runtimes.get("llama.cpp") is not None:
-            spec = ModelSpec(model_id=llama_model, display_name=llama_model, modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "openai-compatible"}), runtimes=frozenset({"llama.cpp"}), tags=frozenset({"remote-runtime"}))
-        else:
-            remote_model = os.getenv("ORBIT_OPENAI_MODEL", "").strip()
-            remote_runtime = os.getenv("ORBIT_OPENAI_RUNTIME_NAME", "openai-compatible").strip()
-            if remote_model and self.runtimes.get(remote_runtime) is not None:
-                spec = ModelSpec(model_id=remote_model, display_name=remote_model, modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "openai-compatible", "remote"}), runtimes=frozenset({remote_runtime}), tags=frozenset({"remote-runtime"}))
-            elif self._demo_enabled():
-                spec = ModelSpec(model_id="orbit-demo", display_name="ORBIT Demo Runtime", modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "streaming", "demo"}), runtimes=frozenset({"orbit-demo"}), tags=frozenset({"built-in", "smoke-test"}))
-            else:
+            return ModelSpec(model_id=llama_model, display_name=llama_model, modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "openai-compatible"}), runtimes=frozenset({"llama.cpp"}), tags=frozenset({"remote-runtime"}))
+        remote_model = os.getenv("ORBIT_OPENAI_MODEL", "").strip()
+        remote_runtime = os.getenv("ORBIT_OPENAI_RUNTIME_NAME", "openai-compatible").strip()
+        if remote_model and self.runtimes.get(remote_runtime) is not None:
+            return ModelSpec(model_id=remote_model, display_name=remote_model, modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "openai-compatible", "remote"}), runtimes=frozenset({remote_runtime}), tags=frozenset({"remote-runtime"}))
+        return None
+
+    def _ensure_configured_model(self) -> None:
+        configured = self._configured_spec()
+        if configured is not None:
+            # If the persisted catalog only contains the built-in demo model,
+            # promote the configured provider automatically. A user-created
+            # catalog is left untouched so explicit model choices remain safe.
+            existing = self.models.all()
+            if not existing or all("demo" in model.tags or model.model_id == "orbit-demo" for model in existing):
+                for model in existing:
+                    self.models.remove(model.model_id)
+                self.models.register(configured)
+                if self.model_manager is not None:
+                    for model in existing:
+                        try:
+                            self.model_manager.remove(model.model_id)
+                        except (KeyError, ValueError):
+                            pass
+                    self.model_manager.register(configured)
                 return
-        self.models.register(spec)
-        if self.model_manager is not None:
-            self.model_manager.register(spec)
+        if self.models.all():
+            return
+        if self._demo_enabled():
+            spec = ModelSpec(model_id="orbit-demo", display_name="ORBIT Demo Runtime", modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "streaming", "demo"}), runtimes=frozenset({"orbit-demo"}), tags=frozenset({"built-in", "smoke-test", "demo"}))
+            self.models.register(spec)
+            if self.model_manager is not None:
+                self.model_manager.register(spec)
 
     def _register_health_checks(self) -> None:
         self.health.register("hardware", lambda: HealthCheck("hardware", HealthStatus.HEALTHY if self.hardware is not None else HealthStatus.UNHEALTHY, "hardware profile available" if self.hardware is not None else "hardware discovery unavailable"))
