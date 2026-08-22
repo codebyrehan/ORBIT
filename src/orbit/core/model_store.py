@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 from pathlib import Path
 from typing import cast
-import json
 
 from orbit.core.models import ModelCatalog, ModelModality, ModelSpec
 
@@ -40,6 +40,13 @@ class ModelStore:
         catalog.register(model)
         self.save(catalog)
 
+    def remove(self, model_id: str) -> bool:
+        catalog = self.load()
+        removed = catalog.remove(model_id)
+        if removed:
+            self.save(catalog)
+        return removed
+
     def save(self, catalog: ModelCatalog) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload: list[dict[str, object]] = []
@@ -62,9 +69,7 @@ class ModelStore:
         min_memory_bytes_raw = item.get("min_memory_bytes")
         local_path_raw = item.get("local_path")
         size_bytes: int | None = size_bytes_raw if isinstance(size_bytes_raw, int) else None
-        min_memory_bytes: int | None = (
-            min_memory_bytes_raw if isinstance(min_memory_bytes_raw, int) else None
-        )
+        min_memory_bytes: int | None = min_memory_bytes_raw if isinstance(min_memory_bytes_raw, int) else None
         local_path: str | None = local_path_raw if isinstance(local_path_raw, str) else None
         return ModelSpec(
             model_id=str(item["model_id"]),
