@@ -14,6 +14,8 @@ class OrbitConfig:
     log_level: str = "INFO"
     privacy_mode: str = "strict"
     api_key: str | None = None
+    rate_limit_per_minute: int = 120
+    rate_limit_burst: int = 20
 
     @classmethod
     def default(cls, home: Path | None = None) -> OrbitConfig:
