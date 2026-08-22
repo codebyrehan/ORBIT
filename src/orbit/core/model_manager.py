@@ -64,6 +64,15 @@ class ModelManager:
     def all(self) -> list[ManagedModel]:
         return list(self._states.values())
 
+    def remove(self, model_id: str) -> None:
+        current = self._require(model_id)
+        if current.state is ModelState.RUNNING:
+            raise ValueError(f"cannot remove running model: {model_id}")
+        if current.path is not None and current.path.exists():
+            current.path.unlink()
+        self.store.remove(model_id)
+        self._states.pop(model_id, None)
+
     def mark_ready(self, model_id: str, path: Path) -> ManagedModel:
         current = self._require(model_id)
         if not path.exists() or not path.is_file():
