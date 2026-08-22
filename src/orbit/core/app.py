@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 from orbit.core.config import OrbitConfig
@@ -80,4 +81,10 @@ class OrbitApp:
         return report
 
     def stop(self) -> None:
-        raise RuntimeError("use await stop_async() for graceful shutdown")
+        """Backward-compatible synchronous wrapper around graceful shutdown."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self.stop_async())
+            return
+        raise RuntimeError("stop() cannot run inside an active event loop; use await stop_async()")
