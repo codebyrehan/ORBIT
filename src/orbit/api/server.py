@@ -9,12 +9,14 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from orbit.api.observability import metrics_for
 from orbit.api.runtime_control import RuntimeExecutionError, RuntimeExecutor
 from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
 from orbit.core.health import HealthStatus
 from orbit.core.model_artifacts import ModelArtifactError, ModelArtifactManager
 from orbit.core.runtime import GenerationRequest
+from orbit.observability import RequestTrace, configure_logging
 
 
 class ChatMessage(BaseModel):
@@ -49,9 +51,19 @@ def _context(request: Request) -> ApiContext:
 
 
 def create_app(app: OrbitApp | None = None) -> FastAPI:
+    configure_logging()
     orbit = app or OrbitApp(OrbitConfig.default())
     api = FastAPI(title="ORBIT API", version="0.1.0", docs_url="/docs")
     api.state.orbit_context = ApiContext(orbit)
+    api.state.orbit_metrics = __import__("orbit.observability", fromlist=["RuntimeMetrics"]).RuntimeMetrics()
+
+    @api.middleware("http")
+    async def request_observability(request: Request, call_next):
+        trace = RequestTrace(request.headers.get("x-request-id"))
+        request.state.request_id = trace.request_id
+        response = await call_next(request)
+        response.headers["x-request-id"] = trace.request_id
+        return response
 
     @api.get("/health")
     async def health(request: Request) -> dict[str, Any]:
@@ -66,6 +78,10 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         if context.app.state.value != "ready" or status is HealthStatus.UNHEALTHY:
             raise HTTPException(status_code=503, detail="ORBIT is not ready")
         return {"ready": True}
+
+    @api.get("/v1/metrics")
+    async def metrics(request: Request) -> dict[str, float | int]:
+        return metrics_for(request).snapshot()
 
     @api.get("/v1/models")
     async def models(request: Request) -> dict[str, Any]:
@@ -109,11 +125,14 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         runtime = context.app.runtimes.active
         if runtime is None:
             raise HTTPException(status_code=503, detail="no inference runtime is active")
+        trace = RequestTrace(http_request.state.request_id)
         generation = GenerationRequest(prompt="\n".join(f"{message.role}: {message.content}" for message in request.messages), model=request.model, temperature=request.temperature, max_tokens=request.max_tokens)
         try:
             result = await RuntimeExecutor(runtime).execute(generation)
         except RuntimeExecutionError as exc:
+            metrics_for(http_request).record(latency_ms=trace.elapsed_ms, tokens=0, failed=True)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        metrics_for(http_request).record(latency_ms=result.duration_ms, tokens=len(result.text.split()))
         return {"id": result.request_id, "object": "chat.completion", "model": request.model, "choices": [{"index": 0, "message": {"role": "assistant", "content": result.text}, "finish_reason": "stop"}], "usage": {"completion_ms": round(result.duration_ms, 3)}}
 
     return api
