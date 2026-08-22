@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
 from orbit.core.hardware import HardwareProfile
 from orbit.core.lifecycle import LifecycleState
@@ -72,26 +73,35 @@ async def test_end_to_end_failover_persistence_recovery_and_shutdown(tmp_path: P
 
     assert "".join(output) == "hello world"
     assert runtimes.active_name == "backup"
-    assert request_manager.get("req-e2e").state == "completed"  # type: ignore[union-attr]
+    record = request_manager.get("req-e2e")
+    assert record is not None
+    assert record.state == "completed"
 
     request_manager.start("req-interrupted", model.model_id, "backup")
-    recovered_manager, report = RecoveryManager(tmp_path).recover_requests()
-    assert recovered_manager.get("req-interrupted").state == "failed"  # type: ignore[union-attr]
-    assert report.recovered_requests == 1
+    recovered_manager, recovery_report = RecoveryManager(tmp_path).recover_requests()
+    recovered = recovered_manager.get("req-interrupted")
+    assert recovered is not None
+    assert recovered.state == "failed"
+    assert recovery_report.recovered_requests == 1
 
-    shutdown = ShutdownCoordinator(timeout=1.0)
+    shutdown = ShutdownCoordinator()
     calls: list[str] = []
-    shutdown.register("request-manager", lambda: calls.append("request-manager"))
-    shutdown.register("runtime-manager", lambda: calls.append("runtime-manager"))
-    report = await shutdown.shutdown()
-    assert report.completed == 2
+
+    async def request_cleanup() -> None:
+        calls.append("request-manager")
+
+    async def runtime_cleanup() -> None:
+        calls.append("runtime-manager")
+
+    shutdown.register(request_cleanup)
+    shutdown.register(runtime_cleanup)
+    shutdown_report = await shutdown.shutdown(timeout=1.0)
+    assert shutdown_report.completed == 2
     assert calls == ["runtime-manager", "request-manager"]
 
 
 def test_app_bootstrap_and_recovery_share_configured_data_dir(tmp_path: Path) -> None:
-    app = __import__("orbit.core.app", fromlist=["OrbitApp"]).OrbitApp(
-        OrbitConfig(data_dir=tmp_path / ".orbit")
-    )
+    app = OrbitApp(OrbitConfig(data_dir=tmp_path / ".orbit"))
     app.start()
     assert app.state is LifecycleState.READY
     assert app.recovery_report is not None
