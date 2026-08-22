@@ -18,6 +18,7 @@ from orbit.core.request_manager import RequestManager
 from orbit.core.router import InferenceRouter
 from orbit.core.runtime_manager import RuntimeManager
 from orbit.core.scheduler import ResourceScheduler
+from orbit.core.shutdown import ShutdownCoordinator, ShutdownReport
 
 
 @dataclass(slots=True)
@@ -37,8 +38,11 @@ class OrbitApp:
     request_manager: RequestManager = field(default_factory=RequestManager)
     recovery_report: object | None = None
     health: HealthRegistry = field(default_factory=HealthRegistry)
+    shutdown_coordinator: ShutdownCoordinator = field(default_factory=ShutdownCoordinator)
 
     def start(self) -> None:
+        if self.state not in (LifecycleState.CREATED, LifecycleState.STOPPED):
+            raise RuntimeError(f"cannot start ORBIT from state: {self.state.value}")
         self.state = LifecycleState.STARTING
         self.config.ensure_directories()
         self.hardware = detect_hardware()
@@ -65,6 +69,15 @@ class OrbitApp:
             raise RuntimeError("ORBIT must be started before saving models")
         self.model_store.save(self.models)
 
-    def stop(self) -> None:
+    async def stop_async(self, timeout: float = 10.0) -> ShutdownReport:
+        if self.state == LifecycleState.STOPPED:
+            return ShutdownReport(0, 0, 0)
+        if self.state not in (LifecycleState.READY, LifecycleState.STARTING, LifecycleState.STOPPING):
+            raise RuntimeError(f"cannot stop ORBIT from state: {self.state.value}")
         self.state = LifecycleState.STOPPING
+        report = await self.shutdown_coordinator.shutdown(timeout)
         self.state = LifecycleState.STOPPED
+        return report
+
+    def stop(self) -> None:
+        raise RuntimeError("use await stop_async() for graceful shutdown")
