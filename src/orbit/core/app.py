@@ -13,6 +13,7 @@ from orbit.core.model_manager import ModelManager
 from orbit.core.model_store import ModelStore
 from orbit.core.models import ModelCatalog
 from orbit.core.orchestrator import InferenceOrchestrator
+from orbit.core.recovery import RecoveryManager
 from orbit.core.request_manager import RequestManager
 from orbit.core.router import InferenceRouter
 from orbit.core.runtime_manager import RuntimeManager
@@ -34,6 +35,7 @@ class OrbitApp:
     orchestrator: InferenceOrchestrator | None = None
     router: InferenceRouter | None = None
     request_manager: RequestManager = field(default_factory=RequestManager)
+    recovery_report: object | None = None
     health: HealthRegistry = field(default_factory=HealthRegistry)
 
     def start(self) -> None:
@@ -46,7 +48,7 @@ class OrbitApp:
         self.model_manager = ModelManager(self.model_store, self.config.data_dir / "models")
         self.orchestrator = InferenceOrchestrator(self.scheduler, self.runtimes)
         self.router = InferenceRouter(self.models, self.orchestrator)
-        self.request_manager = RequestManager(journal_path=self.config.data_dir / "requests.jsonl")
+        self.request_manager, self.recovery_report = RecoveryManager(self.config.data_dir).recover_requests()
         self._register_health_checks()
         self.state = LifecycleState.READY
 
