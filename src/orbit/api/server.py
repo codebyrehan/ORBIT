@@ -33,7 +33,7 @@ class ApiContext:
 def _context(request: Request) -> ApiContext:
     context = request.app.state.orbit_context
     if not isinstance(context, ApiContext):
-        raise RuntimeError("ORBIT API context is unavailable")
+        raise TypeError("ORBIT API context is unavailable")
     if context.app.state.value not in {"ready", "starting"}:
         context.app.start()
     return context
