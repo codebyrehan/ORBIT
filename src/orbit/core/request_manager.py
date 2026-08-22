@@ -57,10 +57,11 @@ class RequestManager:
             return self._records.get(request_id)
 
     def recent(self, limit: int = 100) -> list[RequestRecord]:
-        if not 1 <= limit <= self.max_records:
-            raise ValueError(f"limit must be between 1 and {self.max_records}")
+        if limit <= 0:
+            raise ValueError("limit must be positive")
         with self._lock:
-            return list(self._records.values())[-limit:][::-1]
+            effective_limit = min(limit, self.max_records)
+            return list(self._records.values())[-effective_limit:][::-1]
 
     def _finish(self, request_id: str, state: str, *, error: str | None = None, tokens: int = 0) -> RequestRecord:
         with self._lock:
