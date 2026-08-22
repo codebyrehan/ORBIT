@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from orbit.core.capabilities import CapabilitySet
+from orbit.core.model_manager import ModelState
 from orbit.core.router import RouteRequest
 from orbit.core.runtime import GenerationRequest
 from orbit.api.runtime_control import RuntimeExecutor
@@ -30,6 +31,8 @@ def _db(request: Request) -> sqlite3.Connection:
     CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,title TEXT NOT NULL,created_at REAL NOT NULL,updated_at REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,conversation_id TEXT NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY,project_id TEXT NOT NULL,name TEXT NOT NULL,content TEXT NOT NULL,sha256 TEXT NOT NULL,created_at REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS document_chunks(id TEXT PRIMARY KEY,document_id TEXT NOT NULL,project_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,content TEXT NOT NULL,created_at REAL NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_document_chunks_project ON document_chunks(project_id);
     CREATE TABLE IF NOT EXISTS tools(name TEXT PRIMARY KEY,description TEXT NOT NULL,capability TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,capabilities TEXT NOT NULL,created_at REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY,kind TEXT NOT NULL,name TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,path TEXT NOT NULL,created_at REAL NOT NULL);
@@ -71,11 +74,32 @@ def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def _chunks(text: str, size: int = 900, overlap: int = 120) -> list[str]:
+    normalized = "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").splitlines()).strip()
+    if not normalized:
+        return []
+    result: list[str] = []
+    start = 0
+    while start < len(normalized):
+        end = min(len(normalized), start + size)
+        if end < len(normalized):
+            boundary = max(normalized.rfind("\n", start + size // 2, end), normalized.rfind(" ", start + size // 2, end))
+            if boundary > start:
+                end = boundary
+        chunk = normalized[start:end].strip()
+        if chunk:
+            result.append(chunk)
+        if end >= len(normalized):
+            break
+        start = max(start + 1, end - overlap)
+    return result
+
+
 @router.get("/platform")
 async def platform(request: Request) -> dict[str, Any]:
     db = _db(request)
     try:
-        return {"version": "0.3.0", "modules": {"remote_runtime": True, "models": True, "projects": True, "knowledge": True, "agents": True, "tools": True, "mcp": True, "voice": True, "vision": True, "security": True, "packaging": True}}
+        return {"version": "0.4.0", "modules": {"remote_runtime": True, "models": True, "projects": True, "knowledge": True, "agents": True, "tools": True, "mcp": True, "voice": True, "vision": True, "security": True, "packaging": True}}
     finally:
         db.close()
 
@@ -104,7 +128,7 @@ async def project(project_id: str, request: Request) -> dict[str, Any]:
         row = _row(db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
         if not row: raise HTTPException(404, "project not found")
         row["conversations"] = [dict(r) for r in db.execute("SELECT * FROM conversations WHERE project_id=? ORDER BY updated_at DESC", (project_id,))]
-        row["documents"] = [dict(r) for r in db.execute("SELECT id,name,sha256,created_at FROM documents WHERE project_id=? ORDER BY created_at DESC", (project_id,))]
+        row["documents"] = [dict(r) for r in db.execute("SELECT id,name,sha256,created_at,(SELECT COUNT(*) FROM document_chunks c WHERE c.document_id=documents.id) AS chunks FROM documents WHERE project_id=? ORDER BY created_at DESC", (project_id,))]
         return row
     finally: db.close()
 
@@ -145,20 +169,34 @@ async def add_knowledge(project_id: str, payload: KnowledgeIn, request: Request)
     try:
         if not db.execute("SELECT 1 FROM projects WHERE id=?",(project_id,)).fetchone(): raise HTTPException(404,"project not found")
         digest=hashlib.sha256(payload.content.encode()).hexdigest(); did=hashlib.sha256(f"{project_id}:{digest}".encode()).hexdigest()[:20]
-        db.execute("INSERT OR REPLACE INTO documents VALUES(?,?,?,?,?,?)",(did,project_id,payload.name,payload.content,digest,time.time())); db.commit(); return {"id":did,"name":payload.name,"sha256":digest,"indexed":True,"chunks":max(1,(len(payload.content)+799)//800)}
+        chunks = _chunks(payload.content)
+        db.execute("INSERT OR REPLACE INTO documents VALUES(?,?,?,?,?,?)",(did,project_id,payload.name,payload.content,digest,time.time()))
+        db.execute("DELETE FROM document_chunks WHERE document_id=?", (did,))
+        for index, chunk in enumerate(chunks):
+            chunk_id = hashlib.sha256(f"{did}:{index}:{chunk}".encode()).hexdigest()[:24]
+            db.execute("INSERT INTO document_chunks VALUES(?,?,?,?,?,?)", (chunk_id,did,project_id,index,chunk,time.time()))
+        db.commit(); return {"id":did,"name":payload.name,"sha256":digest,"indexed":True,"chunks":len(chunks)}
     finally: db.close()
 
 
 @router.post("/projects/{project_id}/knowledge/search")
 async def search_knowledge(project_id: str, request: Request, q: str, limit: int = 5) -> dict[str, Any]:
+    if not q.strip(): raise HTTPException(422, "query must not be empty")
     db=_db(request)
     try:
+        if not db.execute("SELECT 1 FROM projects WHERE id=?",(project_id,)).fetchone(): raise HTTPException(404,"project not found")
         terms={x.lower() for x in q.split() if x.strip()}
         hits=[]
-        for r in db.execute("SELECT id,name,content,sha256 FROM documents WHERE project_id=?",(project_id,)):
-            text=r["content"].lower(); score=sum(text.count(t) for t in terms)
-            if score: hits.append((score,dict(r)))
-        hits.sort(key=lambda x:x[0],reverse=True); return {"query":q,"data":[{"id":x[1]["id"],"name":x[1]["name"],"score":x[0],"snippet":x[1]["content"][:800],"sha256":x[1]["sha256"]} for x in hits[:max(1,min(limit,20))]]}
+        for r in db.execute("SELECT c.id,c.document_id,c.chunk_index,c.content,d.name,d.sha256 FROM document_chunks c JOIN documents d ON d.id=c.document_id WHERE c.project_id=?",(project_id,)):
+            text=r["content"].lower()
+            term_scores={t:text.count(t) for t in terms}
+            matched=sum(term_scores.values())
+            if matched:
+                density=matched / max(1, len(text.split()))
+                score=matched + density * 10
+                hits.append((score,dict(r)))
+        hits.sort(key=lambda x:x[0],reverse=True)
+        return {"query":q,"data":[{"id":x[1]["id"],"document_id":x[1]["document_id"],"name":x[1]["name"],"chunk_index":x[1]["chunk_index"],"score":round(x[0],6),"snippet":x[1]["content"][:1200],"sha256":x[1]["sha256"]} for x in hits[:max(1,min(limit,20))]]}
     finally: db.close()
 
 
@@ -218,10 +256,11 @@ async def run_agent(agent_id: str, payload: MessageIn, request: Request) -> dict
     try:
         row=db.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone()
         if not row: raise HTTPException(404,"agent not found")
+        model_id=row["model"]
     finally: db.close()
     context=request.app.state.orbit_context; app=context.app
     if app.router is None: raise HTTPException(503,"inference router unavailable")
-    decision=await app.router.route(RouteRequest(row["model"]))
+    decision=await app.router.route(RouteRequest(model_id))
     result=await RuntimeExecutor(decision.plan.runtime).execute(GenerationRequest(prompt=payload.content,model=decision.model_id),request_id=getattr(request.state,"request_id",None))
     return {"agent_id":agent_id,"request_id":result.request_id,"model":decision.model_id,"runtime":decision.runtime_name,"output":result.text,"duration_ms":result.duration_ms}
 
@@ -235,7 +274,9 @@ async def mcp_tool(name: str, payload: ToolRunIn, request: Request) -> dict[str,
 @router.post("/media")
 async def upload_media(request: Request, file: UploadFile) -> dict[str, Any]:
     context=request.app.state.orbit_context; root=Path(context.app.config.data_dir)/"media"; root.mkdir(parents=True,exist_ok=True)
-    data=await file.read(); digest=hashlib.sha256(data).hexdigest(); media_id=digest[:20]; suffix=Path(file.filename or "upload.bin").suffix[:12]; path=root/f"{media_id}{suffix}"; path.write_bytes(data)
+    data=await file.read(); max_bytes=int(__import__('os').getenv("ORBIT_MAX_MEDIA_BYTES", str(25*1024*1024)))
+    if len(data) > max_bytes: raise HTTPException(413, f"media exceeds configured limit of {max_bytes} bytes")
+    digest=hashlib.sha256(data).hexdigest(); media_id=digest[:20]; suffix=Path(file.filename or "upload.bin").suffix[:12]; path=root/f"{media_id}{suffix}"; path.write_bytes(data)
     kind="image" if (file.content_type or "").startswith("image/") else "audio" if (file.content_type or "").startswith("audio/") else "file"
     db=_db(request)
     try:
@@ -249,6 +290,28 @@ async def media(request: Request) -> dict[str, Any]:
     db=_db(request)
     try: return {"object":"list","data":[dict(r) for r in db.execute("SELECT id,kind,name,mime_type,size_bytes,sha256,created_at FROM media ORDER BY created_at DESC")]}
     finally: db.close()
+
+
+@router.post("/models/{model_id}/start")
+async def start_model(model_id: str, request: Request) -> dict[str, Any]:
+    context=request.app.state.orbit_context; manager=context.app.model_manager
+    if manager is None: raise HTTPException(503,"model manager unavailable")
+    current=manager.get(model_id)
+    if current is None: raise HTTPException(404,f"unknown model: {model_id}")
+    try:
+        managed=manager.mark_running(model_id)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    return {"id":model_id,"state":managed.state.value,"runtime":sorted(managed.spec.runtimes)}
+
+
+@router.post("/models/{model_id}/stop")
+async def stop_model(model_id: str, request: Request) -> dict[str, Any]:
+    context=request.app.state.orbit_context; manager=context.app.model_manager
+    if manager is None: raise HTTPException(503,"model manager unavailable")
+    current=manager.get(model_id)
+    if current is None: raise HTTPException(404,f"unknown model: {model_id}")
+    managed=manager.mark_stopped(model_id)
+    return {"id":model_id,"state":managed.state.value}
 
 
 @router.get("/packaging")
