@@ -1,7 +1,7 @@
 from orbit.core.hardware import Accelerator, AcceleratorVendor, HardwareProfile
 from orbit.core.models import ModelCatalog, ModelSpec
-from orbit.core.runtime_manager import RuntimeManager
 from orbit.core.runtime import RuntimeAdapter, RuntimeInfo
+from orbit.core.runtime_manager import RuntimeManager
 from orbit.core.scheduler import ResourceScheduler
 
 
