@@ -1,10 +1,11 @@
-"""Inference orchestration across models, scheduling, and runtime adapters."""
+"""Inference orchestration across models, scheduling, runtime adapters, and failover."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from orbit.core.failover import RuntimeFailover
 from orbit.core.models import ModelSpec
 from orbit.core.runtime import GenerationRequest, RuntimeAdapter
 from orbit.core.runtime_manager import RuntimeManager
@@ -23,9 +24,10 @@ class ExecutionPlan:
 class InferenceOrchestrator:
     """Turn a model request into a validated, runtime-backed generation stream."""
 
-    def __init__(self, scheduler: ResourceScheduler, runtimes: RuntimeManager) -> None:
+    def __init__(self, scheduler: ResourceScheduler, runtimes: RuntimeManager, failover: RuntimeFailover | None = None) -> None:
         self.scheduler = scheduler
         self.runtimes = runtimes
+        self.failover = failover or RuntimeFailover(runtimes)
 
     async def plan(self, model: ModelSpec, runtime_name: str | None = None) -> ExecutionPlan:
         candidates: tuple[str, ...]
@@ -65,11 +67,22 @@ class InferenceOrchestrator:
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         plan = await self.plan(model, runtime_name)
-        request = GenerationRequest(
-            prompt=prompt,
-            model=model.model_id,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        async for token in plan.runtime.generate(request):
-            yield token
+        request = GenerationRequest(prompt=prompt, model=model.model_id, temperature=temperature, max_tokens=max_tokens)
+        candidates = tuple(sorted(model.runtimes)) if model.runtimes else self.runtimes.names()
+        attempted = {plan.runtime.info.name}
+
+        while True:
+            emitted = False
+            try:
+                async for token in plan.runtime.generate(request):
+                    emitted = True
+                    yield token
+                return
+            except Exception:
+                if emitted:
+                    raise
+                decision = await self.failover.recover(plan.runtime.info.name, candidates)
+                if decision is None or decision.runtime_name in attempted:
+                    raise
+                attempted.add(decision.runtime_name)
+                plan = await self.plan(model, decision.runtime_name)
