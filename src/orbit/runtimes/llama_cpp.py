@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import cast
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+import asyncio
+import json
 
 from orbit.core.runtime import GenerationRequest, RuntimeAdapter, RuntimeInfo
 
