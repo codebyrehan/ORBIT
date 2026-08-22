@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field
 
 from orbit.core.config import OrbitConfig
@@ -12,7 +13,7 @@ from orbit.core.health import HealthCheck, HealthRegistry, HealthStatus
 from orbit.core.lifecycle import LifecycleState
 from orbit.core.model_manager import ModelManager
 from orbit.core.model_store import ModelStore
-from orbit.core.models import ModelCatalog
+from orbit.core.models import ModelCatalog, ModelModality, ModelSpec
 from orbit.core.orchestrator import InferenceOrchestrator
 from orbit.core.recovery import RecoveryManager
 from orbit.core.request_manager import RequestManager
@@ -20,6 +21,8 @@ from orbit.core.router import InferenceRouter
 from orbit.core.runtime_manager import RuntimeManager
 from orbit.core.scheduler import ResourceScheduler
 from orbit.core.shutdown import ShutdownCoordinator, ShutdownReport
+from orbit.runtimes.demo import DemoRuntime
+from orbit.runtimes.llama_cpp import LlamaCppRuntime
 
 
 @dataclass(slots=True)
@@ -51,11 +54,33 @@ class OrbitApp:
         self.model_store = ModelStore(self.config.data_dir / "models.json")
         self.models = self.model_store.load()
         self.model_manager = ModelManager(self.model_store, self.config.data_dir / "models")
+        self._register_runtimes()
+        self._ensure_demo_model()
         self.orchestrator = InferenceOrchestrator(self.scheduler, self.runtimes)
         self.router = InferenceRouter(self.models, self.orchestrator)
         self.request_manager, self.recovery_report = RecoveryManager(self.config.data_dir).recover_requests()
         self._register_health_checks()
         self.state = LifecycleState.READY
+
+    def _register_runtimes(self) -> None:
+        if self.runtimes.get("orbit-demo") is None:
+            self.runtimes.register(DemoRuntime())
+        llama_url = os.getenv("ORBIT_LLAMA_CPP_URL", "").strip()
+        if llama_url and self.runtimes.get("llama.cpp") is None:
+            self.runtimes.register(LlamaCppRuntime(base_url=llama_url))
+
+    def _ensure_demo_model(self) -> None:
+        enabled = os.getenv("ORBIT_ENABLE_DEMO_MODEL", "true").lower() not in {"0", "false", "no", "off"}
+        if not enabled or self.models.all():
+            return
+        llama_model = os.getenv("ORBIT_LLAMA_CPP_MODEL", "").strip()
+        if llama_model and self.runtimes.get("llama.cpp") is not None:
+            spec = ModelSpec(model_id=llama_model, display_name=llama_model, modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "openai-compatible"}), runtimes=frozenset({"llama.cpp"}), tags=frozenset({"remote-runtime"}))
+        else:
+            spec = ModelSpec(model_id="orbit-demo", display_name="ORBIT Demo Runtime", modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "streaming", "demo"}), runtimes=frozenset({"orbit-demo"}), tags=frozenset({"built-in", "smoke-test"}))
+        self.models.register(spec)
+        if self.model_manager is not None:
+            self.model_manager.register(spec)
 
     def _register_health_checks(self) -> None:
         self.health.register("hardware", lambda: HealthCheck("hardware", HealthStatus.HEALTHY if self.hardware is not None else HealthStatus.UNHEALTHY, "hardware profile available" if self.hardware is not None else "hardware discovery unavailable"))
@@ -63,9 +88,9 @@ class OrbitApp:
         self.health.register("scheduler", lambda: HealthCheck("scheduler", HealthStatus.HEALTHY if self.scheduler is not None else HealthStatus.UNHEALTHY, "resource scheduler ready" if self.scheduler is not None else "scheduler unavailable"))
         self.health.register("orchestrator", lambda: HealthCheck("orchestrator", HealthStatus.HEALTHY if self.orchestrator is not None else HealthStatus.UNHEALTHY, "inference orchestration ready" if self.orchestrator is not None else "orchestrator unavailable"))
         self.health.register("router", lambda: HealthCheck("router", HealthStatus.HEALTHY if self.router is not None else HealthStatus.UNHEALTHY, "inference router ready" if self.router is not None else "router unavailable"))
+        self.health.register("runtimes", lambda: HealthCheck("runtimes", HealthStatus.HEALTHY if self.runtimes.names() else HealthStatus.UNHEALTHY, f"{len(self.runtimes.names())} runtime adapters registered"))
 
     def save_models(self) -> None:
-        """Persist the current catalog after an explicit catalog mutation."""
         if self.model_store is None:
             raise RuntimeError("ORBIT must be started before saving models")
         self.model_store.save(self.models)
@@ -81,7 +106,6 @@ class OrbitApp:
         return report
 
     def stop(self) -> None:
-        """Backward-compatible synchronous wrapper around graceful shutdown."""
         try:
             asyncio.get_running_loop()
         except RuntimeError:
