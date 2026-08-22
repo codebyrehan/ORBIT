@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from orbit.core.models import ModelCatalog, ModelSpec
+from orbit.core.models import ModelCatalog
 from orbit.core.orchestrator import ExecutionPlan, InferenceOrchestrator
 
 
