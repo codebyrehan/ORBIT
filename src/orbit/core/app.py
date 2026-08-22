@@ -23,6 +23,7 @@ from orbit.core.scheduler import ResourceScheduler
 from orbit.core.shutdown import ShutdownCoordinator, ShutdownReport
 from orbit.runtimes.demo import DemoRuntime
 from orbit.runtimes.llama_cpp import LlamaCppRuntime
+from orbit.runtimes.openai_compatible import OpenAICompatibleRuntime
 
 
 @dataclass(slots=True)
@@ -55,7 +56,7 @@ class OrbitApp:
         self.models = self.model_store.load()
         self.model_manager = ModelManager(self.model_store, self.config.data_dir / "models")
         self._register_runtimes()
-        self._ensure_demo_model()
+        self._ensure_configured_model()
         self.orchestrator = InferenceOrchestrator(self.scheduler, self.runtimes)
         self.router = InferenceRouter(self.models, self.orchestrator)
         self.request_manager, self.recovery_report = RecoveryManager(self.config.data_dir).recover_requests()
@@ -72,15 +73,25 @@ class OrbitApp:
         llama_url = os.getenv("ORBIT_LLAMA_CPP_URL", "").strip()
         if llama_url and self.runtimes.get("llama.cpp") is None:
             self.runtimes.register(LlamaCppRuntime(base_url=llama_url))
+        remote_key = os.getenv("ORBIT_OPENAI_API_KEY", "").strip()
+        if remote_key and self.runtimes.get("openai-compatible") is None:
+            self.runtimes.register(OpenAICompatibleRuntime.from_env())
 
-    def _ensure_demo_model(self) -> None:
-        if not self._demo_enabled() or self.models.all():
+    def _ensure_configured_model(self) -> None:
+        if self.models.all():
             return
         llama_model = os.getenv("ORBIT_LLAMA_CPP_MODEL", "").strip()
         if llama_model and self.runtimes.get("llama.cpp") is not None:
             spec = ModelSpec(model_id=llama_model, display_name=llama_model, modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "openai-compatible"}), runtimes=frozenset({"llama.cpp"}), tags=frozenset({"remote-runtime"}))
         else:
-            spec = ModelSpec(model_id="orbit-demo", display_name="ORBIT Demo Runtime", modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "streaming", "demo"}), runtimes=frozenset({"orbit-demo"}), tags=frozenset({"built-in", "smoke-test"}))
+            remote_model = os.getenv("ORBIT_OPENAI_MODEL", "").strip()
+            remote_runtime = os.getenv("ORBIT_OPENAI_RUNTIME_NAME", "openai-compatible").strip()
+            if remote_model and self.runtimes.get(remote_runtime) is not None:
+                spec = ModelSpec(model_id=remote_model, display_name=remote_model, modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "openai-compatible", "remote"}), runtimes=frozenset({remote_runtime}), tags=frozenset({"remote-runtime"}))
+            elif self._demo_enabled():
+                spec = ModelSpec(model_id="orbit-demo", display_name="ORBIT Demo Runtime", modality=ModelModality.TEXT, capabilities=frozenset({"text-generation", "chat", "streaming", "demo"}), runtimes=frozenset({"orbit-demo"}), tags=frozenset({"built-in", "smoke-test"}))
+            else:
+                return
         self.models.register(spec)
         if self.model_manager is not None:
             self.model_manager.register(spec)
