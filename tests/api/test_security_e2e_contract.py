@@ -28,6 +28,7 @@ def test_security_contract_enforces_burst_limit(tmp_path) -> None:
 
     assert client.get("/v1/metrics", headers=headers).status_code == 200
     assert client.get("/v1/metrics", headers=headers).status_code == 200
+    assert client.get("/v1/metrics", headers=headers).status_code == 200
     response = client.get("/v1/metrics", headers=headers)
     assert response.status_code == 429
     assert int(response.headers["Retry-After"]) >= 1
