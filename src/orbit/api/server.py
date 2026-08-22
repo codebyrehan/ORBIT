@@ -139,7 +139,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
 
     @api.get("/")
     async def root() -> dict[str, Any]:
-        return {"service": "ORBIT", "status": "ok", "docs": "/docs", "health": "/health", "ready": "/ready"}
+        return {"service": "ORBIT API", "status": "ok", "docs": "/docs", "health": "/health", "ready": "/ready"}
 
     @api.get("/health")
     async def health(request: Request) -> dict[str, Any]:
