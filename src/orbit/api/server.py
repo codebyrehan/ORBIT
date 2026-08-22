@@ -137,6 +137,10 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         api.state.orbit_audit.record(request_id=getattr(request.state, "request_id", trace.request_id), method=request.method, path=request.url.path, status_code=response.status_code, duration_ms=trace.elapsed_ms, authenticated=bool(getattr(request.state, "authenticated", False)))
         return response
 
+    @api.get("/")
+    async def root() -> dict[str, Any]:
+        return {"service": "ORBIT", "status": "ok", "docs": "/docs", "health": "/health", "ready": "/ready"}
+
     @api.get("/health")
     async def health(request: Request) -> dict[str, Any]:
         context = _context(request)
