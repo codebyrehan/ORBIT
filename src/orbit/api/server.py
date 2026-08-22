@@ -10,16 +10,17 @@ from pydantic import BaseModel, Field
 
 from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
+from orbit.core.health import HealthStatus
 from orbit.core.runtime import GenerationRequest
 
 
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: str = Field(min_length=1, max_length=32)
+    content: str = Field(min_length=1)
 
 
 class ChatCompletionRequest(BaseModel):
-    model: str
+    model: str = Field(min_length=1)
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, gt=0)
@@ -33,48 +34,60 @@ class ApiContext:
 def _context(request: Request) -> ApiContext:
     context = request.app.state.orbit_context
     if not isinstance(context, ApiContext):
-        raise TypeError("ORBIT API context is unavailable")
+        raise RuntimeError("ORBIT API context is unavailable")
     if context.app.state.value not in {"ready", "starting"}:
         context.app.start()
     return context
 
 
 def create_app(app: OrbitApp | None = None) -> FastAPI:
-    """Create an API instance without performing filesystem work at import time."""
     orbit = app or OrbitApp(OrbitConfig.default())
-    api = FastAPI(title="ORBIT API", version="0.1.0-dev", docs_url="/docs")
+    api = FastAPI(title="ORBIT API", version="0.1.0", docs_url="/docs")
     api.state.orbit_context = ApiContext(orbit)
 
     @api.get("/health")
     async def health(request: Request) -> dict[str, Any]:
         context = _context(request)
-        hardware = context.app.hardware
+        status = context.app.health.overall()
         return {
-            "status": "ok",
+            "status": "ok" if status is HealthStatus.HEALTHY else status.value,
             "state": context.app.state.value,
-            "platform": hardware.platform if hardware else None,
+            "checks": [
+                {"name": item.name, "status": item.status.value, "detail": item.detail}
+                for item in context.app.health.check()
+            ],
         }
+
+    @api.get("/ready")
+    async def ready(request: Request) -> dict[str, Any]:
+        context = _context(request)
+        status = context.app.health.overall()
+        if context.app.state.value != "ready" or status is HealthStatus.UNHEALTHY:
+            raise HTTPException(status_code=503, detail="ORBIT is not ready")
+        return {"ready": True}
 
     @api.get("/v1/models")
     async def models(request: Request) -> dict[str, Any]:
         context = _context(request)
-        data = [
-            {
-                "id": model.model_id,
-                "object": "model",
-                "owned_by": "orbit",
-                "capabilities": sorted(model.capabilities),
-            }
-            for model in context.app.models.all()
-        ]
-        return {"object": "list", "data": data}
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": model.model_id,
+                    "object": "model",
+                    "owned_by": "orbit",
+                    "capabilities": sorted(model.capabilities),
+                }
+                for model in context.app.models.all()
+            ],
+        }
 
     @api.get("/v1/system")
     async def system(request: Request) -> dict[str, Any]:
         context = _context(request)
         hardware = context.app.hardware
         if hardware is None:
-            raise HTTPException(status_code=503, detail="ORBIT is not initialized")
+            raise HTTPException(status_code=503, detail="ORBIT hardware profile unavailable")
         return {
             "platform": hardware.platform,
             "architecture": hardware.architecture,
@@ -94,12 +107,11 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         request: ChatCompletionRequest, http_request: Request
     ) -> dict[str, Any]:
         context = _context(http_request)
-        runtime = context.app.runtimes.get("llama.cpp") or context.app.runtimes.active
-        if runtime is None:
-            raise HTTPException(status_code=503, detail="no inference runtime is registered")
         if context.app.models.get(request.model) is None:
             raise HTTPException(status_code=404, detail=f"unknown model: {request.model}")
-
+        runtime = context.app.runtimes.active
+        if runtime is None:
+            raise HTTPException(status_code=503, detail="no inference runtime is active")
         prompt = "\n".join(f"{message.role}: {message.content}" for message in request.messages)
         generation = GenerationRequest(
             prompt=prompt,
@@ -110,18 +122,15 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         chunks: list[str] = []
         async for chunk in runtime.generate(generation):
             chunks.append(chunk)
-        text = "".join(chunks)
         return {
             "id": "orbit-chat-completion",
             "object": "chat.completion",
             "model": request.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": text},
-                    "finish_reason": "stop",
-                }
-            ],
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "".join(chunks)},
+                "finish_reason": "stop",
+            }],
         }
 
     return api
