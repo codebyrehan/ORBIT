@@ -34,11 +34,16 @@ def test_projects_conversations_knowledge_and_agent(tmp_path, monkeypatch):
     cid = conversation.json()["id"]
     message = client.post(f"/v1/conversations/{cid}/messages", headers=headers, json={"role": "user", "content": "hello"})
     assert message.status_code == 200
-    doc = client.post(f"/v1/projects/{pid}/knowledge", headers=headers, json={"name": "notes", "content": "ORBIT local first retrieval system"})
+    fetched = client.get(f"/v1/conversations/{cid}", headers=headers)
+    assert fetched.status_code == 200 and fetched.json()["messages"][0]["content"] == "hello"
+    content = "ORBIT local first retrieval system. " * 100
+    doc = client.post(f"/v1/projects/{pid}/knowledge", headers=headers, json={"name": "notes", "content": content})
     assert doc.status_code == 200
+    assert doc.json()["chunks"] > 1
     hits = client.post(f"/v1/projects/{pid}/knowledge/search?q=local+ORBIT", headers=headers)
     assert hits.status_code == 200
     assert hits.json()["data"]
+    assert "chunk_index" in hits.json()["data"][0]
     agent = client.post("/v1/agents", headers=headers, json={"name": "helper", "model": "orbit-demo", "capabilities": ["inference"]})
     assert agent.status_code == 200
     result = client.post(f"/v1/agents/{agent.json()['id']}/run", headers=headers, json={"role": "user", "content": "agent smoke"})
@@ -58,6 +63,19 @@ def test_tool_capability_gate_and_media(tmp_path, monkeypatch):
     media = client.post("/v1/media", headers=headers, files={"file": ("sample.txt", b"hello", "text/plain")})
     assert media.status_code == 200
     assert media.json()["sha256"]
+
+
+def test_model_lifecycle_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setenv("ORBIT_ENABLE_DEMO_MODEL", "true")
+    client = _client(tmp_path)
+    headers = {"Authorization": "Bearer secret"}
+    models = client.get("/v1/models", headers=headers)
+    assert models.status_code == 200
+    model_id = models.json()["data"][0]["id"]
+    started = client.post(f"/v1/models/{model_id}/start", headers=headers)
+    assert started.status_code == 200 and started.json()["state"] == "running"
+    stopped = client.post(f"/v1/models/{model_id}/stop", headers=headers)
+    assert stopped.status_code == 200 and stopped.json()["state"] == "stopped"
 
 
 def test_production_entrypoint_exposes_platform_contract():
