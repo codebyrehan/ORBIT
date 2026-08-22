@@ -90,17 +90,7 @@ def _model_payload(model: Any, app: OrbitApp) -> dict[str, Any]:
     state = model.state.value
     if state == "registered" and model.spec.runtimes and all(name in app.runtimes.healthy_names() for name in model.spec.runtimes):
         state = "ready"
-    return {
-        "id": model.spec.model_id,
-        "object": "model",
-        "owned_by": "orbit",
-        "display_name": model.spec.display_name,
-        "state": state,
-        "path": str(model.path) if model.path else model.spec.local_path,
-        "capabilities": sorted(model.spec.capabilities),
-        "runtimes": sorted(model.spec.runtimes),
-        "tags": sorted(model.spec.tags),
-    }
+    return {"id": model.spec.model_id, "object": "model", "owned_by": "orbit", "display_name": model.spec.display_name, "state": state, "path": str(model.path) if model.path else model.spec.local_path, "capabilities": sorted(model.spec.capabilities), "runtimes": sorted(model.spec.runtimes), "tags": sorted(model.spec.tags)}
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
@@ -151,9 +141,11 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         api.state.orbit_audit.record(request_id=getattr(request.state, "request_id", trace.request_id), method=request.method, path=request.url.path, status_code=response.status_code, duration_ms=trace.elapsed_ms, authenticated=bool(getattr(request.state, "authenticated", False)))
         return response
 
-    @api.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def root() -> str:
-        return DASHBOARD_HTML
+    @api.get("/", include_in_schema=False)
+    async def root(request: Request) -> Any:
+        if "text/html" in request.headers.get("accept", ""):
+            return HTMLResponse(DASHBOARD_HTML)
+        return {"service": "ORBIT API", "status": "ok", "docs": "/docs", "health": "/health", "ready": "/ready"}
 
     @api.get("/v1/session")
     async def session(request: Request) -> dict[str, Any]:
