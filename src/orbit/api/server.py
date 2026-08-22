@@ -68,6 +68,10 @@ def _context(request: Request) -> ApiContext:
     return context
 
 
+def _model_payload(model: Any) -> dict[str, Any]:
+    return {"id": model.spec.model_id, "object": "model", "owned_by": "orbit", "state": model.state.value, "path": str(model.path) if model.path else None, "capabilities": sorted(model.spec.capabilities)}
+
+
 def create_app(app: OrbitApp | None = None) -> FastAPI:
     configure_logging()
     orbit = app or OrbitApp(OrbitConfig.default())
@@ -106,7 +110,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         context = _context(request)
         if context.app.model_manager is None:
             raise HTTPException(status_code=503, detail="model manager unavailable")
-        return {"object": "list", "data": [{"id": model.spec.model_id, "object": "model", "owned_by": "orbit", "state": model.state.value, "path": str(model.path) if model.path else None, "capabilities": sorted(model.spec.capabilities)} for model in context.app.model_manager.all()]}
+        return {"object": "list", "data": [_model_payload(model) for model in context.app.model_manager.all()]}
 
     @api.post("/v1/models")
     async def register_model(payload: ModelRegisterRequest, request: Request) -> dict[str, Any]:
@@ -115,7 +119,8 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail="model manager unavailable")
         spec = ModelSpec(model_id=payload.id, display_name=payload.display_name, modality=payload.modality, size_bytes=payload.size_bytes, min_memory_bytes=payload.min_memory_bytes, capabilities=frozenset(payload.capabilities), runtimes=frozenset(payload.runtimes), tags=frozenset(payload.tags))
         managed = context.app.model_manager.register(spec)
-        return {"id": managed.spec.model_id, "state": managed.state.value}
+        context.app.models.register(spec)
+        return _model_payload(managed)
 
     @api.get("/v1/models/{model_id}")
     async def model_detail(model_id: str, request: Request) -> dict[str, Any]:
@@ -139,7 +144,8 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             installed = ModelInstaller(context.app.model_manager).install(managed.spec, Path(payload.source_path), expected_sha256=payload.sha256)
         except ModelInstallError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return {"id": installed.spec.model_id, "state": installed.state.value, "path": str(installed.path), "size_bytes": installed.spec.size_bytes}
+        context.app.models.register(installed.spec)
+        return _model_payload(installed)
 
     @api.delete("/v1/models/{model_id}")
     async def remove_model(model_id: str, request: Request) -> dict[str, Any]:
@@ -150,6 +156,7 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             ModelInstaller(context.app.model_manager).remove(model_id)
         except ModelInstallError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        context.app.models._models.pop(model_id, None)
         return {"id": model_id, "state": "stopped", "removed": True}
 
     @api.post("/v1/models/{model_id}/verify")
