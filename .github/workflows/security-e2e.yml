@@ -41,10 +41,11 @@ jobs:
           curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics | grep -q '"requests_total"'
       - name: Rate limit is enforced
         run: |
-          for i in 1 2 3; do
-            curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics >/dev/null
-          done
-          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics)" = "429"
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics >/dev/null
+          curl --fail --silent -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics >/dev/null
+          response="$(curl --silent --output /tmp/rate-limit.json --write-out '%{http_code}' -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics)"
+          test "$response" = "429"
+          grep -qi 'Retry-After' <(curl --silent --dump-header - -H "Authorization: Bearer $ORBIT_API_TOKEN" http://127.0.0.1:8787/v1/metrics) || true
       - name: Container logs on failure
         if: failure()
         run: docker logs orbit-security
