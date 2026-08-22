@@ -1,0 +1,21 @@
+services:
+  orbit:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      ORBIT_DATA_DIR: /data/orbit
+      ORBIT_LOG_LEVEL: INFO
+      ORBIT_PRIVACY_MODE: strict
+      ORBIT_ENABLE_DEMO_MODEL: "true"
+      ORBIT_OPENAI_BASE_URL: ${ORBIT_OPENAI_BASE_URL:-}
+      ORBIT_OPENAI_MODEL: ${ORBIT_OPENAI_MODEL:-}
+      ORBIT_OPENAI_API_KEY: ${ORBIT_OPENAI_API_KEY:-}
+      ORBIT_STT_URL: ${ORBIT_STT_URL:-}
+      ORBIT_VISION_URL: ${ORBIT_VISION_URL:-}
+    volumes:
+      - orbit-data:/data/orbit
+    restart: unless-stopped
+
+volumes:
+  orbit-data:
