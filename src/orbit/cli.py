@@ -15,6 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("start", help="initialize and start the ORBIT control plane")
     sub.add_parser("status", help="inspect local hardware and ORBIT state")
+    sub.add_parser("serve", help="run the ORBIT HTTP API")
     return parser
 
 
@@ -46,6 +47,12 @@ def main() -> int:
                 else "memory unknown"
             )
             print(f"Accelerator: {accelerator.vendor.value} — {accelerator.name} ({memory})")
+        return 0
+
+    if args.command == "serve":
+        import uvicorn
+
+        uvicorn.run("orbit.api.server:app", host="127.0.0.1", port=8787, reload=False)
         return 0
 
     build_parser().print_help()
