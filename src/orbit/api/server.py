@@ -17,6 +17,7 @@ from orbit.core.health import HealthStatus
 from orbit.core.model_artifacts import ModelArtifactError, ModelArtifactManager
 from orbit.core.model_installer import ModelInstallError, ModelInstaller
 from orbit.core.models import ModelModality, ModelSpec
+from orbit.core.router import RouteRequest
 from orbit.core.runtime import GenerationRequest
 from orbit.observability import RequestTrace, RuntimeMetrics, configure_logging
 
@@ -31,6 +32,7 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, gt=0)
+    runtime: str | None = Field(default=None, min_length=1)
 
 
 class ModelVerifyRequest(BaseModel):
@@ -157,6 +159,8 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
         except ModelInstallError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         context.app.models = context.app.model_store.load() if context.app.model_store is not None else context.app.models
+        if context.app.router is not None:
+            context.app.router.catalog = context.app.models
         return _model_payload(installed)
 
     @api.delete("/v1/models/{model_id}")
@@ -170,6 +174,8 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if context.app.model_store is not None:
             context.app.models = context.app.model_store.load()
+            if context.app.router is not None:
+                context.app.router.catalog = context.app.models
         return {"id": model_id, "state": "stopped", "removed": True}
 
     @api.post("/v1/models/{model_id}/verify")
@@ -195,20 +201,24 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
     async def chat_completion(request: ChatCompletionRequest, http_request: Request) -> dict[str, Any]:
         context = _context(http_request)
         _sync_catalog_to_manager(context.app)
-        if context.app.models.get(request.model) is None:
-            raise HTTPException(status_code=404, detail=f"unknown model: {request.model}")
-        runtime = context.app.runtimes.active
-        if runtime is None:
-            raise HTTPException(status_code=503, detail="no inference runtime is active")
+        if context.app.router is None:
+            raise HTTPException(status_code=503, detail="inference router unavailable")
         trace = RequestTrace(http_request.state.request_id)
-        generation = GenerationRequest(prompt="\n".join(f"{message.role}: {message.content}" for message in request.messages), model=request.model, temperature=request.temperature, max_tokens=request.max_tokens)
+        prompt = "\n".join(f"{message.role}: {message.content}" for message in request.messages)
         try:
-            result = await RuntimeExecutor(runtime).execute(generation)
+            decision = await context.app.router.route(RouteRequest(request.model, request.runtime))
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        generation = GenerationRequest(prompt=prompt, model=decision.model_id, temperature=request.temperature, max_tokens=request.max_tokens)
+        try:
+            result = await RuntimeExecutor(decision.plan.runtime).execute(generation)
         except RuntimeExecutionError as exc:
             metrics_for(http_request).record(latency_ms=trace.elapsed_ms, tokens=0, failed=True)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         metrics_for(http_request).record(latency_ms=result.duration_ms, tokens=len(result.text.split()))
-        return {"id": result.request_id, "object": "chat.completion", "model": request.model, "choices": [{"index": 0, "message": {"role": "assistant", "content": result.text}, "finish_reason": "stop"}], "usage": {"completion_ms": round(result.duration_ms, 3)}}
+        return {"id": result.request_id, "object": "chat.completion", "model": decision.model_id, "runtime": decision.runtime_name, "choices": [{"index": 0, "message": {"role": "assistant", "content": result.text}, "finish_reason": "stop"}], "usage": {"completion_ms": round(result.duration_ms, 3)}}
 
     return api
 
