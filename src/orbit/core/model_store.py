@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import cast
-
-import json
 
 from orbit.core.models import ModelCatalog, ModelModality, ModelSpec
 
