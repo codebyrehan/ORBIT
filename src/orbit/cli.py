@@ -9,10 +9,12 @@ from orbit.core.config import OrbitConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="orbit", description="Local-first AI operating environment")
+    parser = argparse.ArgumentParser(
+        prog="orbit", description="Local-first AI operating environment"
+    )
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("start", help="initialize and start the ORBIT control plane")
-    sub.add_parser("status", help="show local ORBIT status")
+    sub.add_parser("status", help="inspect local hardware and ORBIT state")
     return parser
 
 
@@ -26,7 +28,24 @@ def main() -> int:
         return 0
 
     if args.command == "status":
+        app.start()
+        hardware = app.hardware
+        assert hardware is not None
+        memory_gb = (
+            f"{hardware.memory_bytes / 1024**3:.1f} GiB"
+            if hardware.memory_bytes
+            else "unknown"
+        )
         print(f"ORBIT: {app.state.value}")
+        print(f"Platform: {hardware.platform} / {hardware.architecture}")
+        print(f"Memory: {memory_gb}")
+        for accelerator in hardware.accelerators:
+            memory = (
+                f"{accelerator.memory_bytes / 1024**3:.1f} GiB"
+                if accelerator.memory_bytes
+                else "memory unknown"
+            )
+            print(f"Accelerator: {accelerator.vendor.value} — {accelerator.name} ({memory})")
         return 0
 
     build_parser().print_help()
