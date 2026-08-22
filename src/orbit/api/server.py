@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 import json
 import secrets
 from pathlib import Path
@@ -289,7 +290,9 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
             try:
                 result = await executor.execute(generation)
             except RuntimeExecutionError as exc:
-                context.app.request_manager.fail(trace.request_id, str(exc))
+                request_id = http_request.state.request_id
+                context.app.request_manager.start(request_id, decision.model_id, decision.runtime_name)
+                context.app.request_manager.fail(request_id, str(exc))
                 metrics_for(http_request).record(latency_ms=trace.elapsed_ms, tokens=0, failed=True)
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
             context.app.request_manager.start(result.request_id, decision.model_id, decision.runtime_name)
