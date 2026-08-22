@@ -24,10 +24,9 @@ class RecoveryManager:
     def recover_requests(self, *, max_records: int = 1000) -> tuple[RequestManager, RecoveryReport]:
         manager = RequestManager(max_records=max_records, journal_path=self.data_dir / "requests.jsonl")
         records = manager.recent(max_records)
-        recovered = [record for record in records if record.error == "request interrupted by process restart"]
         active = [record for record in records if record.state == "active"]
         failed = [record for record in records if record.state == "failed"]
-        return manager, RecoveryReport(len(recovered), len(active), len(failed))
+        return manager, RecoveryReport(manager.recovered_count, len(active), len(failed))
 
     @staticmethod
     def unresolved(manager: RequestManager) -> list[RequestRecord]:
