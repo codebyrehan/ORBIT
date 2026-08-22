@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from orbit.api.observability import metrics_for
+from orbit.api.rate_limit import RateLimiter
 from orbit.api.runtime_control import RuntimeExecutionError, RuntimeExecutor
 from orbit.core.app import OrbitApp
 from orbit.core.config import OrbitConfig
@@ -96,15 +97,21 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
     api = FastAPI(title="ORBIT API", version="0.1.0", docs_url="/docs")
     api.state.orbit_context = ApiContext(orbit)
     api.state.orbit_metrics = RuntimeMetrics()
+    limiter = RateLimiter(orbit.config.rate_limit_per_minute, orbit.config.rate_limit_burst)
 
     @api.middleware("http")
     async def request_security(request: Request, call_next: Any) -> Any:
-        """Protect control-plane endpoints when an API key is configured."""
-        if request.url.path.startswith("/v1/") and orbit.config.api_key is not None:
-            authorization = request.headers.get("authorization", "")
-            scheme, _, token = authorization.partition(" ")
-            if scheme.lower() != "bearer" or not token or not secrets.compare_digest(token, orbit.config.api_key):
-                return JSONResponse(status_code=401, content={"detail": "authentication required"}, headers={"WWW-Authenticate": "Bearer"})
+        """Authenticate and rate-limit control-plane requests."""
+        if request.url.path.startswith("/v1/"):
+            if orbit.config.api_key is not None:
+                authorization = request.headers.get("authorization", "")
+                scheme, _, token = authorization.partition(" ")
+                if scheme.lower() != "bearer" or not token or not secrets.compare_digest(token, orbit.config.api_key):
+                    return JSONResponse(status_code=401, content={"detail": "authentication required"}, headers={"WWW-Authenticate": "Bearer"})
+            identity = request.headers.get("authorization") or (request.client.host if request.client else "unknown")
+            allowed, retry_after = limiter.allow(identity)
+            if not allowed:
+                return JSONResponse(status_code=429, content={"detail": "rate limit exceeded"}, headers={"Retry-After": str(retry_after)})
         return await call_next(request)
 
     @api.middleware("http")
