@@ -1,4 +1,4 @@
-"""Small deterministic resource scheduler for model placement."""
+"""Deterministic resource scheduler for model placement."""
 
 from __future__ import annotations
 
@@ -26,6 +26,9 @@ class ResourceScheduler:
         score = model.compatibility_score(self.hardware, runtime)
         if score <= 0:
             return None
-        accelerator = self.hardware.accelerators[0]
-        reason = f"compatible with {accelerator.vendor.value} on {self.hardware.architecture}"
+        if self.hardware.accelerators:
+            accelerator = self.hardware.accelerators[0]
+            reason = f"compatible with {accelerator.vendor.value} on {self.hardware.architecture}"
+        else:
+            reason = f"compatible with CPU on {self.hardware.architecture}"
         return Placement(model.model_id, runtime, score, reason)
