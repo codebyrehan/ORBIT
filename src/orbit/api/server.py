@@ -128,13 +128,13 @@ def create_app(app: OrbitApp | None = None) -> FastAPI:
 
     @api.middleware("http")
     async def request_audit(request: Request, call_next: Any) -> Any:
-        trace = RequestTrace(getattr(request.state, "request_id", None))
+        trace = RequestTrace()
         try:
             response = await call_next(request)
         except Exception:
-            api.state.orbit_audit.record(request_id=trace.request_id, method=request.method, path=request.url.path, status_code=500, duration_ms=trace.elapsed_ms, authenticated=bool(getattr(request.state, "authenticated", False)))
+            api.state.orbit_audit.record(request_id=getattr(request.state, "request_id", trace.request_id), method=request.method, path=request.url.path, status_code=500, duration_ms=trace.elapsed_ms, authenticated=bool(getattr(request.state, "authenticated", False)))
             raise
-        api.state.orbit_audit.record(request_id=trace.request_id, method=request.method, path=request.url.path, status_code=response.status_code, duration_ms=trace.elapsed_ms, authenticated=bool(getattr(request.state, "authenticated", False)))
+        api.state.orbit_audit.record(request_id=getattr(request.state, "request_id", trace.request_id), method=request.method, path=request.url.path, status_code=response.status_code, duration_ms=trace.elapsed_ms, authenticated=bool(getattr(request.state, "authenticated", False)))
         return response
 
     @api.get("/health")
