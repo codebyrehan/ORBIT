@@ -42,12 +42,12 @@ class ModelStore:
 
     def save(self, catalog: ModelCatalog) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = []
+        payload: list[dict[str, object]] = []
         for model in catalog.all():
-            item = asdict(model)
+            item = cast(dict[str, object], asdict(model))
             item["modality"] = model.modality.value
             for key in ("capabilities", "runtimes", "tags"):
-                item[key] = sorted(item[key])
+                item[key] = sorted(cast(frozenset[str], item[key]))
             payload.append(item)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
