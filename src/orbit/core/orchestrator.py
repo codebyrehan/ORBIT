@@ -83,10 +83,10 @@ class InferenceOrchestrator:
 
         while True:
             emitted = False
-            acquired = False
+            acquired_runtime: str | None = None
             try:
-                await self.load_control.acquire(plan.runtime.info.name, timeout=capacity_timeout)
-                acquired = True
+                acquired_runtime = plan.runtime.info.name
+                await self.load_control.acquire(acquired_runtime, timeout=capacity_timeout)
                 async for token in plan.runtime.generate(request):
                     emitted = True
                     yield token
@@ -100,5 +100,5 @@ class InferenceOrchestrator:
                 attempted.add(decision.runtime_name)
                 plan = await self.plan(model, decision.runtime_name)
             finally:
-                if acquired:
-                    await self.load_control.release(plan.runtime.info.name)
+                if acquired_runtime is not None:
+                    await self.load_control.release(acquired_runtime)
